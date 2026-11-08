@@ -1,0 +1,64 @@
+services:
+  node_a:
+    image: hyperledger/besu:latest
+    container_name: demo-node${N1}
+    user: root
+    restart: unless-stopped
+    command: >-
+      --genesis-file=/config/genesis.json
+      --node-private-key-file=/config/key
+      --data-path=/data
+      --min-gas-price=0
+      --p2p-interface=0.0.0.0
+      --p2p-host=${MY_IP}
+      --p2p-port=${P2P_PORT_1:-30303}
+      --nat-method=NONE
+      --sync-mode=FULL
+      --sync-min-peers=1
+      ${BOOTNODES_FLAG_1:-}
+      --rpc-http-enabled --rpc-http-host=0.0.0.0
+      --rpc-http-api=ETH,NET,WEB3,QBFT,ADMIN,TXPOOL
+      --rpc-http-cors-origins=all --host-allowlist=*
+    ports:
+      - "${P2P_PORT_1:-30303}:${P2P_PORT_1:-30303}/tcp"
+      - "${P2P_PORT_1:-30303}:${P2P_PORT_1:-30303}/udp"
+      - "${RPC_BIND:-127.0.0.1}:${RPC_PORT_1:-8545}:8545"
+    volumes:
+      - ../besu-net/genesis.json:/config/genesis.json
+      - ../besu-net/node${N1}/key:/config/key
+      - ../besu-net/static/static-nodes-${N1}.json:/data/static-nodes.json
+      - data1:/data
+
+  node_b:
+    image: hyperledger/besu:latest
+    container_name: demo-node${N2}
+    user: root
+    restart: unless-stopped
+    command: >-
+      --genesis-file=/config/genesis.json
+      --node-private-key-file=/config/key
+      --data-path=/data
+      --min-gas-price=0
+      --p2p-interface=0.0.0.0
+      --p2p-host=${MY_IP}
+      --p2p-port=${P2P_PORT_2:-30304}
+      --nat-method=NONE
+      --sync-mode=FULL
+      --sync-min-peers=1
+      ${BOOTNODES_FLAG_2:-}
+      --rpc-http-enabled --rpc-http-host=0.0.0.0
+      --rpc-http-api=ETH,NET,WEB3,QBFT,ADMIN,TXPOOL
+      --rpc-http-cors-origins=all --host-allowlist=*
+    ports:
+      - "${P2P_PORT_2:-30304}:${P2P_PORT_2:-30304}/tcp"
+      - "${P2P_PORT_2:-30304}:${P2P_PORT_2:-30304}/udp"
+      - "${RPC_BIND:-127.0.0.1}:${RPC_PORT_2:-8546}:8545"
+    volumes:
+      - ../besu-net/genesis.json:/config/genesis.json
+      - ../besu-net/node${N2}/key:/config/key
+      - ../besu-net/static/static-nodes-${N2}.json:/data/static-nodes.json
+      - data2:/data
+
+volumes:
+  data1:
+  data2:
