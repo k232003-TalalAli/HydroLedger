@@ -1,7 +1,9 @@
+name: besu-setup
+
 services:
   node_a:
     image: hyperledger/besu:latest
-    container_name: demo-node${N1}
+    container_name: hydro-node${N1}
     user: root
     restart: unless-stopped
     command: >-
@@ -30,8 +32,9 @@ services:
       - data1:/data
 
   node_b:
+    profiles: ["two"]   # only started on laptop A (COMPOSE_PROFILES=two in its .env)
     image: hyperledger/besu:latest
-    container_name: demo-node${N2}
+    container_name: hydro-node${N2:-2}
     user: root
     restart: unless-stopped
     command: >-
@@ -55,8 +58,8 @@ services:
       - "${RPC_BIND:-127.0.0.1}:${RPC_PORT_2:-8546}:8545"
     volumes:
       - ../besu-net/genesis.json:/config/genesis.json
-      - ../besu-net/node${N2}/key:/config/key
-      - ../besu-net/static/static-nodes-${N2}.json:/data/static-nodes.json
+      - ../besu-net/node${N2:-2}/key:/config/key
+      - ../besu-net/static/static-nodes-${N2:-2}.json:/data/static-nodes.json
       - data2:/data
 
 volumes:

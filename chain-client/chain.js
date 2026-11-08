@@ -6,7 +6,7 @@
 const { JsonRpcProvider, Wallet, toUtf8Bytes, hexlify, toUtf8String } = require('ethers');
 
 const RPC_URL = process.env.RPC_URL || 'http://127.0.0.1:8545';   // the node on THIS laptop
-const CHAIN_ID = Number(process.env.CHAIN_ID || 1337);            // matches genesis.json
+const CHAIN_ID = Number(process.env.CHAIN_ID || 1338);            // matches genesis.json
 // Gas is free on this chain (min-gas-price=0, zeroBaseFee), so any key works.
 // Set PRIVATE_KEY in your env to use a fixed sender address.
 const PRIVATE_KEY = process.env.PRIVATE_KEY || Wallet.createRandom().privateKey;

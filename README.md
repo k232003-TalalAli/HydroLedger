@@ -1,7 +1,11 @@
-Layout (copy to each laptop next to your existing folders, overwriting):
-  besu-net/genesis.json                 -> both laptops (identical)
-  laptopA/besu-net-demo/*               -> Laptop A  (nodes 1,2)  replaces its besu-net-demo/
-  laptopB/besu-net-demo/*               -> Laptop B  (nodes 3,4)  replaces its besu-net-demo/
-  chain-client/                         -> both laptops
-Node keys (besu-net/node1..4/key) stay as you have them; both laptops need all of besu-net/.
-Ports per laptop: first node p2p 30303 / RPC 8545, second node p2p 30304 / RPC 8546.
+# Hydroledger – new chain (besu-setup)
+Chain ID 1338 · QBFT · 4 validators across 3 laptops
+- Laptop A: hydro-node1 (p2p 30303, rpc 8545, bootnode) + hydro-node2 (p2p 30304, rpc 8546)
+- Laptop B: hydro-node3 (p2p 30303, rpc 8545)
+- Laptop C: hydro-node4 (p2p 30303, rpc 8545)
+
+1. node set-ips.js <IP_A> <IP_B> <IP_C>     (once, on one laptop, BEFORE copying the folder)
+2. Copy the whole folder to all 3 laptops.
+3. In besu-setup/: copy envs\A.env .env (laptop A) / envs\B.env (laptop B) / envs\C.env (laptop C)
+4. Open firewall (see chat instructions), start laptop A first: docker compose up -d
+5. cd chain-client && npm install && node chain.js status
