@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "HydroLedger Grid Simulation",
     "disabled": false,
-    "info": "Simulates Upstream_Master and Sector_B flow telemetry over MQTT, with live leak and corrupt-spike inject buttons for demo.",
+    "info": "Simulates Upstream_Master and Sector_B flow telemetry over MQTT, with live leak, corrupt-spike, and OPEN_VALVE reset inject buttons for demo.",
     "env": []
   },
   {
@@ -139,6 +139,31 @@
     ]
   },
   {
+    "id": "a1b2c3d4e5f60305",
+    "type": "inject",
+    "z": "a1b2c3d4e5f60101",
+    "name": "RESET / OPEN VALVE",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "{\"command\":\"OPEN_VALVE\"}",
+    "payloadType": "str",
+    "x": 200,
+    "y": 420,
+    "wires": [
+      [
+        "a1b2c3d4e5f60402"
+      ]
+    ]
+  },
+  {
     "id": "a1b2c3d4e5f60401",
     "type": "mqtt out",
     "z": "a1b2c3d4e5f60101",
@@ -157,6 +182,24 @@
     "wires": []
   },
   {
+    "id": "a1b2c3d4e5f60402",
+    "type": "mqtt out",
+    "z": "a1b2c3d4e5f60101",
+    "name": "Publish actuation/valve",
+    "topic": "actuation/valve",
+    "qos": "0",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "a1b2c3d4e5f60201",
+    "x": 640,
+    "y": 420,
+    "wires": []
+  },
+  {
     "id": "a1b2c3d4e5f60501",
     "type": "mqtt in",
     "z": "a1b2c3d4e5f60101",
@@ -170,7 +213,7 @@
     "rh": 0,
     "inputs": 0,
     "x": 220,
-    "y": 460,
+    "y": 540,
     "wires": [
       [
         "a1b2c3d4e5f60601"
@@ -191,7 +234,7 @@
     "statusVal": "",
     "statusType": "auto",
     "x": 520,
-    "y": 460,
+    "y": 540,
     "wires": []
   }
 ]

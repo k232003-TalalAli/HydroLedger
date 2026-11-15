@@ -1,6 +1,6 @@
 # Grid Simulation (`simulation/`)
 
-Node-RED flow that simulates HydroLedger sector telemetry over MQTT. It publishes Upstream / Sector_B flow readings to `sensor/flow`, provides one-click leak and corrupt-spike injectors for demos, and listens on `actuation/valve` so `CLOSE_VALVE` commands appear in the Debug sidebar.
+Node-RED flow that simulates HydroLedger sector telemetry over MQTT. It publishes Upstream / Sector_B flow readings to `sensor/flow`, provides one-click leak, corrupt-spike, and valve-reset injectors for demos, and listens on `actuation/valve` so `CLOSE_VALVE` / `OPEN_VALVE` commands appear in the Debug sidebar.
 
 ---
 
@@ -62,5 +62,6 @@ Point both Node-RED MQTT broker configs at the shared Mosquitto host (Laptop A's
    ```json
    {"command":"CLOSE_VALVE","reason":"ANOMALY_DETECTED"}
    ```
+6. To re-arm the sector after a shutoff (clear the aggregator's alert lock and reset daily volume), click **`RESET / OPEN VALVE`**. The aggregator should log `[RESET] OPEN_VALVE received — alert lock cleared and sector re-armed.`
 
 Optional: click **`INJECT CORRUPT SPIKE (999 L/min)`** to verify the aggregator's noise filter drops impossible readings (`[FILTERED]`) without triggering actuation.

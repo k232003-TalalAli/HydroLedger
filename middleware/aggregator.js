@@ -27,12 +27,12 @@ const client = mqtt.connect(process.env.MQTT_BROKER_URL);
 
 client.on('connect', () => {
   console.log(`[MQTT] Connected to ${process.env.MQTT_BROKER_URL}`);
-  client.subscribe('sensor/flow', (err) => {
+  client.subscribe(['sensor/flow', 'actuation/valve'], (err) => {
     if (err) {
-      console.error('[MQTT] Failed to subscribe to sensor/flow:', err.message);
+      console.error('[MQTT] Failed to subscribe:', err.message);
       return;
     }
-    console.log('[MQTT] Subscribed to sensor/flow');
+    console.log('[MQTT] Subscribed to sensor/flow and actuation/valve');
   });
 });
 
@@ -41,6 +41,23 @@ client.on('error', (err) => {
 });
 
 client.on('message', (topic, payload) => {
+  if (topic === 'actuation/valve') {
+    let data;
+    try {
+      data = JSON.parse(payload.toString());
+    } catch {
+      return;
+    }
+    if (data.command === 'OPEN_VALVE') {
+      alertDispatched = false;
+      sectorState.dailyVolumeUsed = 0;
+      console.log(
+        '[RESET] OPEN_VALVE received — alert lock cleared and sector re-armed.'
+      );
+    }
+    return;
+  }
+
   if (topic !== 'sensor/flow') return;
 
   let data;
