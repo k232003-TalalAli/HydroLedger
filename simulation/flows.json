@@ -1,0 +1,197 @@
+[
+  {
+    "id": "a1b2c3d4e5f60101",
+    "type": "tab",
+    "label": "HydroLedger Grid Simulation",
+    "disabled": false,
+    "info": "Simulates Upstream_Master and Sector_B flow telemetry over MQTT, with live leak and corrupt-spike inject buttons for demo.",
+    "env": []
+  },
+  {
+    "id": "a1b2c3d4e5f60201",
+    "type": "mqtt-broker",
+    "name": "Local Mosquitto",
+    "broker": "127.0.0.1",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": 60,
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "false",
+    "birthPayload": "",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "false",
+    "closePayload": "",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willRetain": "false",
+    "willPayload": "",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "a1b2c3d4e5f60301",
+    "type": "inject",
+    "z": "a1b2c3d4e5f60101",
+    "name": "Upstream_Master (20.0 L/min)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "2",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "{\"node_id\":\"Upstream_Master\",\"flow_rate\":20.0}",
+    "payloadType": "str",
+    "x": 220,
+    "y": 80,
+    "wires": [
+      [
+        "a1b2c3d4e5f60401"
+      ]
+    ]
+  },
+  {
+    "id": "a1b2c3d4e5f60302",
+    "type": "inject",
+    "z": "a1b2c3d4e5f60101",
+    "name": "Sector_B Normal (20.0 L/min)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "2",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "{\"node_id\":\"Sector_B\",\"flow_rate\":20.0}",
+    "payloadType": "str",
+    "x": 220,
+    "y": 160,
+    "wires": [
+      [
+        "a1b2c3d4e5f60401"
+      ]
+    ]
+  },
+  {
+    "id": "a1b2c3d4e5f60303",
+    "type": "inject",
+    "z": "a1b2c3d4e5f60101",
+    "name": "INJECT PIPE BURST (Sector_B = 2.0 L/min)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "{\"node_id\":\"Sector_B\",\"flow_rate\":2.0}",
+    "payloadType": "str",
+    "x": 260,
+    "y": 260,
+    "wires": [
+      [
+        "a1b2c3d4e5f60401"
+      ]
+    ]
+  },
+  {
+    "id": "a1b2c3d4e5f60304",
+    "type": "inject",
+    "z": "a1b2c3d4e5f60101",
+    "name": "INJECT CORRUPT SPIKE (999 L/min)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "{\"node_id\":\"Upstream_Master\",\"flow_rate\":999}",
+    "payloadType": "str",
+    "x": 240,
+    "y": 340,
+    "wires": [
+      [
+        "a1b2c3d4e5f60401"
+      ]
+    ]
+  },
+  {
+    "id": "a1b2c3d4e5f60401",
+    "type": "mqtt out",
+    "z": "a1b2c3d4e5f60101",
+    "name": "Publish sensor/flow",
+    "topic": "sensor/flow",
+    "qos": "0",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "a1b2c3d4e5f60201",
+    "x": 640,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "a1b2c3d4e5f60501",
+    "type": "mqtt in",
+    "z": "a1b2c3d4e5f60101",
+    "name": "Subscribe actuation/valve",
+    "topic": "actuation/valve",
+    "qos": "0",
+    "datatype": "auto-detect",
+    "broker": "a1b2c3d4e5f60201",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 220,
+    "y": 460,
+    "wires": [
+      [
+        "a1b2c3d4e5f60601"
+      ]
+    ]
+  },
+  {
+    "id": "a1b2c3d4e5f60601",
+    "type": "debug",
+    "z": "a1b2c3d4e5f60101",
+    "name": "Valve Actuation Output",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "false",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 520,
+    "y": 460,
+    "wires": []
+  }
+]

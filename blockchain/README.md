@@ -24,16 +24,14 @@ Everything for the blockchain lives in this `blockchain` folder:
 
 Install and open these **three** things:
 
-1. **Docker Desktop**  
+1. **Docker Desktop**
    - Download: https://www.docker.com/products/docker-desktop/  
    - Install it, then **open Docker Desktop** and wait until it says it is running (whale icon in the system tray is steady, not animating forever).
-
-2. **Tailscale**  
+2. **Tailscale**
    - Download: https://tailscale.com/download  
    - Install it, sign in with the same account / network as the rest of the team.  
    - Make sure the Tailscale icon shows **Connected** (not disconnected).
-
-3. **Node.js**  
+3. **Node.js**
    - Download the LTS version: https://nodejs.org/  
    - Install with the default options.  
    - Close and reopen any terminal windows after installing.
@@ -44,17 +42,18 @@ You also need the **full HydroLedger project** on your PC, including this `block
 
 ## Step 0 – Open the right apps
 
-1. Start **Docker Desktop** and wait until it is fully running.  
-2. Confirm **Tailscale** is connected.  
+1. Start **Docker Desktop** and wait until it is fully running.
+2. Confirm **Tailscale** is connected.
 3. Keep this README open so you can copy the commands.
 
 ---
 
 ## Step 1 – Remove the old `.env` file
 
-1. Open File Explorer and go to:  
+1. Open File Explorer and go to:
+
    `HydroLedger` → `blockchain` → `besu-setup`
-2. If you see a file named `.env`, **delete it**.  
+2. If you see a file named `.env`, **delete it**.
    - (You will create a fresh one in Step 4 from the correct template for your laptop.)
 
 If you do not see `.env`, that is fine — continue.
@@ -63,9 +62,9 @@ If you do not see `.env`, that is fine — continue.
 
 ## Step 2 – Open PowerShell as Administrator
 
-1. Click the Start menu.  
-2. Type `PowerShell`.  
-3. Right-click **Windows PowerShell** → **Run as administrator** → Yes.  
+1. Click the Start menu.
+2. Type `PowerShell`.
+3. Right-click **Windows PowerShell** → **Run as administrator** → Yes.
 4. Go to the `besu-setup` folder. Paste this (change the path if your folder is somewhere else), then press Enter:
 
 ```powershell
@@ -217,6 +216,7 @@ docker compose down
 ## Troubleshooting
 
 ### “ECONNREFUSED 127.0.0.1:8545”
+
 Your Besu container is not running or not ready yet.
 
 ```powershell
@@ -228,6 +228,7 @@ docker logs hydro-node3
 (Use `hydro-node4` on Daniyal’s laptop, or `hydro-node1` on Laptop A.)
 
 ### “genesis.json (Is a directory)” or mount “not a directory”
+
 Docker once created empty **folders** where **files** should be. Fix:
 
 1. Make sure `besu-net` has real **files** (not folders) for:
@@ -246,12 +247,14 @@ docker compose up -d
 (`down -v` removes the old volume — needed if a previous broken run left bad data.)
 
 ### Peers stay at 0
+
 - Confirm Tailscale is **Connected** on all laptops.  
 - Confirm Laptop A started first.  
 - Confirm you used the correct `.env` for your laptop (`B.env` / `C.env` / `A.env`).  
 - Confirm the firewall commands in Step 3 were run in **Administrator** PowerShell.
 
 ### Wrong person / wrong env
+
 Delete `.env` in `besu-setup` and copy the correct one again (Step 4), then:
 
 ```powershell
