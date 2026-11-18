@@ -1,3 +1,9 @@
 node_modules/
 hardhat/
 .env
+wallets.local.json
+middleware/state/
+hydro-contracts/artifacts/
+hydro-contracts/cache/
+hydro-contracts/typechain-types/
+deployments/*.local.json
