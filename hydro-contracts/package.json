@@ -5,7 +5,8 @@
   "description": "HydroLedger WaterQuotaRegistry and WaterTelemetryLog",
   "scripts": {
     "compile": "hardhat compile",
-    "test": "hardhat test"
+    "test": "hardhat test",
+    "advance-day": "node scripts/admin/advance-day.js"
   },
   "dependencies": {
     "dotenv": "16.4.7",

@@ -6,7 +6,7 @@ const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 async function deployFixture() {
   const [owner, reporterA, reporterB, stranger] = await ethers.getSigners();
   const Registry = await ethers.getContractFactory("WaterQuotaRegistry");
-  const registry = await Registry.deploy();
+  const registry = await Registry.deploy(600n);
   await registry.waitForDeployment();
 
   const idA = ethers.encodeBytes32String("Sector_A");
@@ -17,7 +17,7 @@ async function deployFixture() {
   await registry.addReporter(reporterB.address, idB);
 
   const Log = await ethers.getContractFactory("WaterTelemetryLog");
-  const log = await Log.deploy(await registry.getAddress(), 540n);
+  const log = await Log.deploy(await registry.getAddress(), 210n);
   await log.waitForDeployment();
 
   return { registry, log, owner, reporterA, reporterB, stranger, idA, idB };
@@ -39,16 +39,19 @@ describe("WaterTelemetryLog", function () {
   it("reverts with TooSoon until the interval has elapsed", async function () {
     const { log, reporterA, idA } = await deployFixture();
     await log.connect(reporterA).recordSnapshot(idA, 1n, 1n, 1n, 1n);
+    const t0 = BigInt(await time.latest());
     await expect(
       log.connect(reporterA).recordSnapshot(idA, 1n, 1n, 1n, 1n)
     ).to.be.revertedWithCustomError(log, "TooSoon");
 
-    await time.increase(539);
+    // One second short of the interval: still rejected.
+    await time.setNextBlockTimestamp(t0 + 209n);
     await expect(
       log.connect(reporterA).recordSnapshot(idA, 1n, 1n, 1n, 1n)
     ).to.be.revertedWithCustomError(log, "TooSoon");
 
-    await time.increase(1);
+    // Exactly the interval: accepted.
+    await time.setNextBlockTimestamp(t0 + 210n);
     await log.connect(reporterA).recordSnapshot(idA, 2n, 2n, 2n, 2n);
     expect(await log.snapshotCount(idA)).to.equal(2n);
   });
@@ -62,7 +65,7 @@ describe("WaterTelemetryLog", function () {
     await log.connect(reporterA).recordSnapshot(idA, 50000n, 50000n, 50000n, 10n ** 30n);
     expect((await log.latestSnapshot(idA)).dailyVolumeUsed).to.equal(10n ** 30n);
 
-    await time.increase(540);
+    await time.increase(210);
     await expect(
       log.connect(reporterA).recordSnapshot(idA, 1n, 50001n, 0n, 0n)
     ).to.be.revertedWithCustomError(log, "FlowOutOfRange");

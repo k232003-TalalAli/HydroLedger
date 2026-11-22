@@ -1,9 +1,21 @@
+# dependencies
 node_modules/
-hardhat/
+
+# secrets: never commit
 .env
 wallets.local.json
-middleware/state/
-hydro-contracts/artifacts/
-hydro-contracts/cache/
-hydro-contracts/typechain-types/
+blockchain/besu-net/node*/key
+
+# local / generated
+state/
+artifacts/
+cache/
+typechain-types/
+coverage/
 deployments/*.local.json
+start-simulation.ps1
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/

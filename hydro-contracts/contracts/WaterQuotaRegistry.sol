@@ -22,6 +22,11 @@ contract WaterQuotaRegistry {
     uint256 public leakThreshold = 500;
     uint256 public dayOffsetSeconds;
 
+    /// @notice Length of one quota "day" in seconds. Fixed at deploy (600 = a day passes every 10 minutes).
+    uint256 public immutable dayLengthSeconds;
+    /// @notice Days added by the owner through advanceDay(). Part of currentDay().
+    uint256 public manualDayShift;
+
     mapping(bytes32 => bool) public sectorExists;
     mapping(address => bytes32) public reporterSector;
     /// @dev 0 none, 1 leak, 2 quota.
@@ -35,6 +40,7 @@ contract WaterQuotaRegistry {
     event QuotaChanged(bytes32 indexed sectorId, uint256 oldQuota, uint256 newQuota, uint256 timestamp);
     event LeakThresholdChanged(uint256 oldValue, uint256 newValue);
     event DayOffsetChanged(uint256 oldValue, uint256 newValue);
+    event DayAdvanced(uint256 newDayIndex, uint256 manualDayShift, address indexed by);
     event ReporterAdded(address indexed reporter, bytes32 indexed sectorId);
     event ReporterRemoved(address indexed reporter, bytes32 indexed sectorId);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
@@ -47,6 +53,7 @@ contract WaterQuotaRegistry {
     error QuotaMustBePositive();
     error ThresholdMustBePositive();
     error DayOffsetTooLarge();
+    error DayLengthMustBePositive();
     error AlreadyReporter();
     error NotAReporter();
     error ReporterSectorMismatch();
@@ -57,8 +64,11 @@ contract WaterQuotaRegistry {
         _;
     }
 
-    constructor() {
+    /// @param dayLengthSeconds_ Seconds per quota day. Deploy default is 600 (10 minutes).
+    constructor(uint256 dayLengthSeconds_) {
+        if (dayLengthSeconds_ == 0) revert DayLengthMustBePositive();
         owner = msg.sender;
+        dayLengthSeconds = dayLengthSeconds_;
     }
 
     /// @notice Create a sector with the valve open.
@@ -92,9 +102,9 @@ contract WaterQuotaRegistry {
         emit LeakThresholdChanged(oldValue, v);
     }
 
-    /// @param v Seconds added before the UTC day index. Must be below 86400.
+    /// @param v Seconds added before the day index. Must be below dayLengthSeconds.
     function setDayOffsetSeconds(uint256 v) external onlyOwner {
-        if (v >= 86400) revert DayOffsetTooLarge();
+        if (v >= dayLengthSeconds) revert DayOffsetTooLarge();
         uint256 oldValue = dayOffsetSeconds;
         dayOffsetSeconds = v;
         emit DayOffsetChanged(oldValue, v);
@@ -165,6 +175,14 @@ contract WaterQuotaRegistry {
         }
     }
 
+    /// @notice Owner: make a new day start now, without waiting for the clock. This only moves
+    ///         currentDay() forward by one. Each sector still rolls over through rolloverQuotaDay
+    ///         (the aggregator does it by itself, or the owner calls it for the sector right after).
+    function advanceDay() external onlyOwner {
+        manualDayShift += 1;
+        emit DayAdvanced(currentDay(), manualDayShift, msg.sender);
+    }
+
     /// @notice Advance the quota day. A quota closure reopens. A leak closure stays closed.
     function rolloverQuotaDay(bytes32 id) external {
         if (!sectorExists[id]) revert SectorUnknown();
@@ -199,7 +217,7 @@ contract WaterQuotaRegistry {
     }
 
     function currentDay() public view returns (uint256) {
-        return (block.timestamp + dayOffsetSeconds) / 1 days;
+        return (block.timestamp + dayOffsetSeconds) / dayLengthSeconds + manualDayShift;
     }
 
     function isReporter(address a) external view returns (bool) {

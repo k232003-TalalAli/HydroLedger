@@ -1,7 +1,8 @@
 /**
  * Print sector state and recent audit events.
  * Usage (from hydro-contracts): node scripts/admin/read-sector.js Sector_B
- * Point RPC_URL at this laptop's local Besu RPC.
+ * Read only: needs no owner key. Point RPC_URL at this laptop's local Besu RPC
+ * (laptop A: node1 8545 or node2 8546, B and C: 8545).
  */
 const { connect, sectorIdFromName } = require("./common");
 
@@ -12,7 +13,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { registry, telemetry, deployment, url } = connect();
+  const { registry, telemetry, deployment, url } = connect({ readOnly: true });
   const id = sectorIdFromName(sectorName);
   const fromBlock = 0;
 
@@ -39,7 +40,12 @@ async function main() {
   console.log(`  isValveClosed      ${sector.isValveClosed}`);
   console.log(`  lastUpdated        ${sector.lastUpdated}`);
   console.log(`closeCause ${cause} (${causeName})`);
-  console.log(`quotaDay ${day}`);
+  const [chainDay, dayLength, dayShift] = await Promise.all([
+    registry.currentDay(),
+    registry.dayLengthSeconds(),
+    registry.manualDayShift(),
+  ]);
+  console.log(`quotaDay ${day} (chain currentDay ${chainDay}, day length ${dayLength} s, manual shift ${dayShift})`);
   console.log("latestSnapshot:");
   console.log(`  upstreamFlowRate   ${snap.upstreamFlowRate}`);
   console.log(`  downstreamFlowRate ${snap.downstreamFlowRate}`);

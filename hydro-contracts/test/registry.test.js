@@ -3,10 +3,13 @@ const { ethers } = require("hardhat");
 const { time } = require("@nomicfoundation/hardhat-network-helpers");
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
+// One quota day is 600 s (10 minutes) in these tests, the deploy default.
+const DAY = 600n;
+
 async function deployFixture() {
   const [owner, reporterA, reporterA2, reporterB, stranger] = await ethers.getSigners();
   const Registry = await ethers.getContractFactory("WaterQuotaRegistry");
-  const registry = await Registry.deploy();
+  const registry = await Registry.deploy(DAY);
   await registry.waitForDeployment();
 
   const idA = ethers.encodeBytes32String("Sector_A");
@@ -206,7 +209,7 @@ describe("WaterQuotaRegistry", function () {
     await registry.connect(reporterA).updateSectorState(idA, 100n, 100n, 0n, 200n, 0n);
     await registry.connect(reporterB).updateSectorState(idB, 2000n, 0n, 0n, 0n, 0n);
 
-    await time.increase(86400);
+    await time.increase(Number(DAY));
 
     await expect(registry.connect(reporterA).rolloverQuotaDay(idA))
       .to.emit(registry, "DailyRollover")
@@ -271,7 +274,7 @@ describe("WaterQuotaRegistry", function () {
       registry,
       "ThresholdMustBePositive"
     );
-    await expect(registry.setDayOffsetSeconds(86400n)).to.be.revertedWithCustomError(
+    await expect(registry.setDayOffsetSeconds(DAY)).to.be.revertedWithCustomError(
       registry,
       "DayOffsetTooLarge"
     );
@@ -302,10 +305,74 @@ describe("WaterQuotaRegistry", function () {
     await expect(registry.setLeakThreshold(10n)).to.be.revertedWithCustomError(registry, "NotOwner");
   });
 
+  it("starts a new day every dayLengthSeconds", async function () {
+    const { registry } = await deployFixture();
+    expect(await registry.dayLengthSeconds()).to.equal(DAY);
+    const d0 = await registry.currentDay();
+    await time.increase(Number(DAY));
+    expect(await registry.currentDay()).to.equal(d0 + 1n);
+    await time.increase(Number(DAY) * 3);
+    expect(await registry.currentDay()).to.equal(d0 + 4n);
+  });
+
+  it("rejects a zero day length at deploy", async function () {
+    const Registry = await ethers.getContractFactory("WaterQuotaRegistry");
+    await expect(Registry.deploy(0n)).to.be.revertedWithCustomError(Registry, "DayLengthMustBePositive");
+  });
+
+  it("lets only the owner advance the day", async function () {
+    const { registry, stranger, reporterA } = await deployFixture();
+    await expect(registry.connect(stranger).advanceDay()).to.be.revertedWithCustomError(registry, "NotOwner");
+    await expect(registry.connect(reporterA).advanceDay()).to.be.revertedWithCustomError(registry, "NotOwner");
+  });
+
+  it("advanceDay makes a rollover due at once and reopens a quota closure", async function () {
+    const { registry, owner, reporterA, idA } = await deployFixture();
+
+    await registry.setSectorQuota(idA, 100n);
+    await registry.connect(reporterA).updateSectorState(idA, 100n, 100n, 0n, 200n, 0n);
+    expect((await registry.sectorRegistry(idA)).isValveClosed).to.equal(true);
+    await expect(registry.connect(reporterA).rolloverQuotaDay(idA)).to.be.revertedWithCustomError(
+      registry,
+      "RolloverNotDue"
+    );
+
+    const before = await registry.currentDay();
+    await expect(registry.advanceDay())
+      .to.emit(registry, "DayAdvanced")
+      .withArgs(before + 1n, 1n, owner.address);
+    expect(await registry.currentDay()).to.equal(before + 1n);
+    expect(await registry.manualDayShift()).to.equal(1n);
+
+    // The owner rolls the sector over by hand.
+    await expect(registry.rolloverQuotaDay(idA))
+      .to.emit(registry, "DailyRollover")
+      .withArgs(idA, before + 1n, true, anyValue);
+    expect(await registry.quotaDay(idA)).to.equal(before + 1n);
+    expect((await registry.sectorRegistry(idA)).isValveClosed).to.equal(false);
+    expect((await registry.sectorRegistry(idA)).dailyVolumeUsed).to.equal(0n);
+
+    // The aggregator's own attempt for the same day is now refused. This is the "already done" case.
+    await expect(registry.connect(reporterA).rolloverQuotaDay(idA)).to.be.revertedWithCustomError(
+      registry,
+      "RolloverNotDue"
+    );
+  });
+
+  it("advanceDay still lets the natural clock move on afterwards", async function () {
+    const { registry, idA } = await deployFixture();
+    await registry.advanceDay();
+    await registry.rolloverQuotaDay(idA);
+    const stored = await registry.quotaDay(idA);
+    await time.increase(Number(DAY));
+    expect(await registry.currentDay()).to.be.greaterThan(stored);
+    await registry.rolloverQuotaDay(idA);
+  });
+
   it("shifts currentDay with dayOffsetSeconds", async function () {
     const { registry } = await deployFixture();
     const before = await registry.currentDay();
-    await registry.setDayOffsetSeconds(86399n);
+    await registry.setDayOffsetSeconds(DAY - 1n);
     const after = await registry.currentDay();
     expect(after === before || after === before + 1n).to.equal(true);
   });

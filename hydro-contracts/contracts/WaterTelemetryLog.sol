@@ -38,7 +38,7 @@ contract WaterTelemetryLog {
     error FlowOutOfRange();
     error NotRegistryOwner();
 
-    /// @param minIntervalSeconds_ Deploy default is 540, just under 10 minutes.
+    /// @param minIntervalSeconds_ Deploy default is 210, just under the aggregator's 4 minute snapshot period.
     constructor(address registry_, uint256 minIntervalSeconds_) {
         if (registry_ == address(0)) revert ZeroRegistry();
         registry = IWaterQuotaRegistry(registry_);

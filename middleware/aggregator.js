@@ -5,18 +5,44 @@ const path = require("path");
 const mqtt = require("mqtt");
 const { ethers } = require("ethers");
 
-const ALPHA = 0.7;
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const ALPHA = 0.7; // EMA weight of the newest reading
 const CHAIN_ID = 1338;
-const LEGACY = { type: 0, gasPrice: 0 };
-const CONFIRM_TIMEOUT_MS = 60000;
+const LEGACY = { type: 0, gasPrice: 0 }; // same as chain-client/chain.js: free gas, legacy tx
+const CONFIRM_TIMEOUT_MS = 60000; // never wait longer than this for one confirmation
+const RPC_TIMEOUT_MS = 20000; // a hung RPC must not stall anything for minutes
+const RETRY_MIN_MS = 5000;
+const RETRY_MAX_MS = 60000;
+const ROLLOVER_RETRY_MS = 60000; // after an RPC or send failure
+const ROLLOVER_NOT_YET_MS = 15000; // chain clock has not reached the new day yet (small clock skew)
+// Time-dependent writes (rollover, snapshot) are sent with a fixed gas limit, so the node does not
+// pre-simulate them. A simulation runs against the latest block, which on a QBFT chain with empty
+// blocks every hour can be old, and it would refuse a call the next real block accepts. Failed
+// transactions cost nothing here (gasPrice 0).
+const ROLLOVER_GAS_LIMIT = 300000;
+const SNAPSHOT_GAS_LIMIT = 500000;
 
-  const REGISTRY_ABI = [
+const CAUSE_NONE = 0;
+const CAUSE_LEAK = 1;
+const CAUSE_QUOTA = 2;
+
+// Own OPEN_VALVE publishes come back on our subscription. These reasons are only ever
+// set by this program, so a message carrying one is an echo and has already been applied.
+const SELF_OPEN_REASONS = new Set(["OWNER_RESET", "DAILY_ROLLOVER"]);
+
+// Human-readable ABIs. Scaling (x100) happens in scale()/fromChain() only.
+const REGISTRY_ABI = [
   "function updateSectorState(bytes32 sectorId, uint256 upstreamFlowRate, uint256 downstreamFlowRate, uint256 deltaQ, uint256 dailyVolumeUsed, uint256 dailyQuotaLimit)",
   "function rolloverQuotaDay(bytes32 id)",
   "function sectorRegistry(bytes32) view returns (uint256 upstreamFlowRate, uint256 downstreamFlowRate, uint256 deltaQ, uint256 dailyVolumeUsed, uint256 dailyQuotaLimit, bool isValveClosed, uint256 lastUpdated)",
   "function leakThreshold() view returns (uint256)",
   "function dayOffsetSeconds() view returns (uint256)",
-  "function closeCause(bytes32) view returns (uint8)",
+  "function dayLengthSeconds() view returns (uint256)",
+  "function manualDayShift() view returns (uint256)",
+  "function quotaDay(bytes32) view returns (uint256)",
+  "error RolloverNotDue()",
 ];
 
 const TELEMETRY_ABI = [
@@ -24,63 +50,91 @@ const TELEMETRY_ABI = [
   "error TooSoon()",
 ];
 
-const CAUSE_NONE = 0;
-const CAUSE_LEAK = 1;
-const CAUSE_QUOTA = 2;
-
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
 function main() {
   const config = loadConfig();
   const state = createState(config);
-  const chain = { provider: null, wallet: null, registry: null, telemetry: null, queue: Promise.resolve() };
+  const chain = {
+    provider: null,
+    wallet: null,
+    registry: null,
+    telemetry: null,
+    ready: Promise.resolve(), // resolves when the wallet/contracts exist (live mode)
+    queue: Promise.resolve(), // the single serial writer queue
+  };
 
   loadPersistedState(config, state);
-  start(config, state, chain).catch((err) => {
-    console.error("[CONFIG]", err.message || err);
-    process.exit(1);
-  });
+  start(config, state, chain);
 }
 
-async function start(config, state, chain) {
+function start(config, state, chain) {
   const client = mqtt.connect(config.mqttUrl);
-  wireMqtt(client, config, state, chain);
+  wireMqtt(client, config, state);
 
-  if (!config.dryRun) {
-    await initChain(config, chain);
-    await pollChain(config, state, chain, false);
-    setInterval(() => {
-      pollChain(config, state, chain, true).catch((err) => {
-        console.error("[CHAIN] Poll failed:", err.shortMessage || err.message || err);
-      });
-    }, config.chainPollSec * 1000);
-  }
+  // Valve protection starts first and never waits for the chain.
+  setInterval(safe("evaluate", () => evaluate(config, state, chain)), config.evalIntervalSec * 1000);
+  setInterval(safe("snapshot", () => flushSnapshot(config, state, chain)), config.snapshotIntervalMin * 60 * 1000);
+  setInterval(safe("save", () => saveState(config, state)), 10000);
 
-  if (state.needsRollover) {
-    if (config.dryRun) {
+  if (config.dryRun) {
+    // DRY_RUN makes no RPC calls at all. A day change left over in the state file is applied locally.
+    if (state.needsRollover) {
       state.needsRollover = false;
-      if (state.locked && state.closeCause === CAUSE_QUOTA) {
-        state.chainValveClosed = false;
-        publish(client, "OPEN_VALVE", "DAILY_ROLLOVER");
-        clearLock(state);
-        saveState(config, state);
-      }
-    } else {
-      beginRollover(config, state, chain);
+      applyDryRunRollover(config, state);
+    }
+  } else {
+    chain.ready = initChain(config, chain).catch((err) => {
+      console.error("[CONFIG] Cannot create the reporter wallet:", err.shortMessage || err.message || err);
+      process.exit(1);
+    });
+    // Jobs wait for the wallet; the first poll and a pending rollover go through the queue.
+    chain.ready.then(() => pollChain(config, state, chain).catch(logPollError));
+    setInterval(() => pollChain(config, state, chain).catch(logPollError), config.chainPollSec * 1000);
+
+    if (state.needsRollover) beginRollover(config, state, chain);
+    if (state.locked && !state.chainLogged && state.pendingBreach) {
+      const seq = state.breachSeq;
+      const payload = state.pendingBreach;
+      enqueue(chain, () => sendBreach(config, state, chain, payload, seq));
     }
   }
 
-  setInterval(() => evaluate(config, state, chain), config.evalIntervalSec * 1000);
-  setInterval(() => flushSnapshot(config, state, chain), config.snapshotIntervalMin * 60 * 1000);
-  setInterval(() => saveState(config, state), 10000);
+  process.on("SIGINT", () => shutdown(config, state));
+  process.on("SIGTERM", () => shutdown(config, state));
+  process.on("unhandledRejection", (err) => {
+    console.error("[ERROR] Unhandled rejection:", err && (err.shortMessage || err.message || err));
+  });
+
   evaluate(config, state, chain);
-
-  if (state.locked) {
-    publish(client, "CLOSE_VALVE", reasonFromCause(state.closeCause));
-    if (!config.dryRun && !state.chainLogged && state.pendingBreach) {
-      enqueue(chain, () => sendBreach(config, state, chain, state.pendingBreach));
-    }
-  }
 }
 
+function shutdown(config, state) {
+  try {
+    saveState(config, state);
+  } catch (err) {
+    console.error("[STATE] Could not save on exit:", err.message);
+  }
+  process.exit(0);
+}
+
+function safe(label, fn) {
+  return () => {
+    try {
+      const out = fn();
+      if (out && typeof out.catch === "function") {
+        out.catch((err) => console.error(`[ERROR] ${label}:`, err.shortMessage || err.message || err));
+      }
+    } catch (err) {
+      console.error(`[ERROR] ${label}:`, err.shortMessage || err.message || err);
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
 function loadConfig() {
   const dryRun = process.env.DRY_RUN === "true";
   const sectorId = required("SECTOR_ID");
@@ -93,7 +147,7 @@ function loadConfig() {
   }
 
   const upstreamNodeId = optional("UPSTREAM_NODE_ID", "Upstream_Master");
-  const downstream = expected.filter((id) => id !== upstreamNodeId);
+  const downstream = [...new Set(expected.filter((id) => id !== upstreamNodeId))];
   if (downstream.length === 0) {
     fail("EXPECTED_DOWNSTREAM must list a node other than UPSTREAM_NODE_ID.");
   }
@@ -117,11 +171,13 @@ function loadConfig() {
     evalIntervalSec: positiveNumber("EVAL_INTERVAL_SEC", 2),
     staleAfterSec: positiveNumber("STALE_AFTER_SEC", 10),
     breachConsecutive: positiveInt("BREACH_CONSECUTIVE", 2),
-    snapshotIntervalMin: positiveNumber("SNAPSHOT_INTERVAL_MIN", 10),
+    snapshotIntervalMin: positiveNumber("SNAPSHOT_INTERVAL_MIN", 4),
     chainPollSec: positiveNumber("CHAIN_POLL_SEC", 30),
+    dayLengthSeconds: positiveInt("DAY_LENGTH_SECONDS", 600), // one quota "day"; the chain value wins
     dayOffsetSeconds: nonNegativeNumber("DAY_OFFSET_SECONDS", 0),
     stateDir: optional("STATE_DIR", "./state"),
   };
+  if (config.dayOffsetSeconds >= config.dayLengthSeconds) fail("DAY_OFFSET_SECONDS must be below DAY_LENGTH_SECONDS.");
 
   if (!dryRun) {
     config.rpcUrl = required("RPC_URL");
@@ -131,7 +187,7 @@ function loadConfig() {
     config.keystorePath = (process.env.KEYSTORE_PATH || "").trim();
     config.keystorePassword = process.env.KEYSTORE_PASSWORD || "";
     if (!config.privateKey && !config.keystorePath) {
-      fail("Live mode needs PRIVATE_KEY or KEYSTORE_PATH plus KEYSTORE_PASSWORD.");
+      fail("Live mode needs PRIVATE_KEY (or KEYSTORE_PATH plus KEYSTORE_PASSWORD).");
     }
   }
 
@@ -140,26 +196,32 @@ function loadConfig() {
 
 function createState(config) {
   const now = Date.now();
-  return {
-    sensors: {},
+  const state = {
+    sensors: {}, // node_id -> { value, timestamp }
     ema: {},
     unexpectedLogged: new Set(),
-    dailyVolumeUsed: 0,
+    dailyVolumeUsed: 0, // litres (float, not scaled)
     lastUpstreamMs: null,
-    dayIndex: dayIndexAt(now, config.dayOffsetSeconds),
-    dayOffsetSeconds: config.dayOffsetSeconds,
-    leakThreshold: config.leakThreshold,
-    quota: config.dailyQuotaLimit,
+    dayLengthSeconds: config.dayLengthSeconds, // replaced by the chain value
+    dayOffsetSeconds: config.dayOffsetSeconds, // replaced by the chain value
+    dayShift: 0, // days the owner advanced by hand (chain manualDayShift)
+    dayIndex: 0, // set just below, from the three values above
+    offsetSynced: false,
+    leakThreshold: config.leakThreshold, // L/min, replaced by the chain value
+    quota: config.dailyQuotaLimit, // litres, replaced by the chain value
     locked: false,
     closeCause: CAUSE_NONE,
-    chainLogged: false,
+    chainLogged: false, // the breach write was confirmed on-chain
+    chainClosedSeen: false, // after that, the chain was seen reporting a closed valve
     pendingBreach: null,
+    breachSeq: 0, // identifies the current breach so a stale write cannot mark a new one
     breachCount: 0,
     needsRollover: false,
     rolloverQueued: false,
+    rolloverTrack: newTrack(),
+    snapshotBusy: false,
     chainValveClosed: null,
-    openedLocally: false,
-    usingFallback: true,
+    mismatchLogged: false,
     fallbackLogged: false,
     staleSignature: "",
     warmupSignature: "",
@@ -167,6 +229,8 @@ function createState(config) {
     window: emptyWindow(),
     client: null,
   };
+  state.dayIndex = todayIndex(state, now);
+  return state;
 }
 
 function loadPersistedState(config, state) {
@@ -181,36 +245,52 @@ function loadPersistedState(config, state) {
     return;
   }
 
+  // Last day parameters seen on the chain (a manual day advance changes them). Use them so a
+  // restart does not mistake today's day for a different one.
+  if (Number.isInteger(saved.dayLengthSeconds) && saved.dayLengthSeconds > 0) {
+    state.dayLengthSeconds = saved.dayLengthSeconds;
+    state.dayOffsetSeconds = Number.isInteger(saved.dayOffsetSeconds) && saved.dayOffsetSeconds >= 0 ? saved.dayOffsetSeconds : state.dayOffsetSeconds;
+    state.dayShift = Number.isInteger(saved.dayShift) && saved.dayShift >= 0 ? saved.dayShift : 0;
+    state.dayIndex = todayIndex(state, Date.now());
+  }
+
+  const savedLocked = Boolean(saved.locked) && (saved.closeCause === CAUSE_LEAK || saved.closeCause === CAUSE_QUOTA);
+
   if (saved.dayIndex === state.dayIndex) {
     state.dailyVolumeUsed = Number(saved.dailyVolumeUsed) || 0;
-    state.locked = Boolean(saved.locked);
-    state.closeCause = Number(saved.closeCause) || CAUSE_NONE;
-    state.chainLogged = Boolean(saved.chainLogged);
-    state.pendingBreach = saved.pendingBreach || null;
-    console.log(`[STATE] Restored ${config.sectorId} for day ${state.dayIndex}.`);
+    state.locked = savedLocked;
+    state.closeCause = savedLocked ? Number(saved.closeCause) : CAUSE_NONE;
+    state.chainLogged = savedLocked && Boolean(saved.chainLogged);
+    state.chainClosedSeen = savedLocked && Boolean(saved.chainClosedSeen);
+    state.pendingBreach = savedLocked ? saved.pendingBreach || null : null;
+    console.log(`[STATE] Restored ${config.sectorId} for day ${state.dayIndex}${state.locked ? " (valve locked)" : ""}.`);
     return;
   }
 
   console.log("[STATE] Saved day is not today. Starting the new day.");
-  // Volume stays at 0. A leak lock is kept so an owner reset can still reopen it.
-  // A quota lock is kept until rollover confirms, then the valve opens.
-  if (saved.locked && (saved.closeCause === CAUSE_LEAK || saved.closeCause === CAUSE_QUOTA)) {
+  // Volume stays 0. A leak lock is kept so an owner reset can still reopen it.
+  // A quota lock is kept until the rollover is confirmed, then the valve opens.
+  if (savedLocked) {
     state.locked = true;
     state.closeCause = Number(saved.closeCause);
     state.chainLogged = Boolean(saved.chainLogged);
+    state.chainClosedSeen = Boolean(saved.chainClosedSeen);
     state.pendingBreach = state.chainLogged ? null : saved.pendingBreach || null;
-    state.needsRollover = true;
     console.log(
       state.closeCause === CAUSE_LEAK
         ? "[STATE] Leak closure carried into the new day."
-        : "[STATE] Quota closure will reopen after rollover confirms."
+        : "[STATE] Quota closure will reopen after the rollover is confirmed."
     );
-  } else if (Number.isFinite(saved.dayIndex)) {
+  }
+  if (Number.isFinite(saved.dayIndex) && saved.dayIndex < state.dayIndex) {
     state.needsRollover = true;
   }
 }
 
-function wireMqtt(client, config, state, chain) {
+// ---------------------------------------------------------------------------
+// MQTT
+// ---------------------------------------------------------------------------
+function wireMqtt(client, config, state) {
   state.client = client;
   client.on("connect", () => {
     console.log(`[MQTT] Connected to ${config.mqttUrl}`);
@@ -221,6 +301,8 @@ function wireMqtt(client, config, state, chain) {
       }
       console.log("[MQTT] Subscribed to sensor/flow and actuation/valve");
     });
+    // After a restart or a broker reconnect, say again that the valve must be closed.
+    if (state.locked) publish(client, "CLOSE_VALVE", reasonFromCause(state.closeCause));
   });
 
   client.on("error", (err) => {
@@ -228,12 +310,11 @@ function wireMqtt(client, config, state, chain) {
   });
 
   client.on("message", (topic, payload) => {
-    if (topic === "actuation/valve") {
-      onValveMessage(config, state, payload);
-      return;
-    }
-    if (topic === "sensor/flow") {
-      onFlowMessage(config, state, payload);
+    try {
+      if (topic === "actuation/valve") onValveMessage(config, state, payload);
+      else if (topic === "sensor/flow") onFlowMessage(config, state, payload);
+    } catch (err) {
+      console.error("[ERROR] Message handler:", err.message);
     }
   });
 }
@@ -245,21 +326,22 @@ function onValveMessage(config, state, payload) {
   } catch {
     return;
   }
-  if (data.command !== "OPEN_VALVE") return;
+  if (!data || typeof data !== "object" || data.command !== "OPEN_VALVE") return;
+  if (SELF_OPEN_REASONS.has(data.reason)) return; // our own publish coming back: already applied
 
-  // Our own OPEN_VALVE publishes come back on this subscription. Clearing again is harmless.
-  state.openedLocally = true;
+  // Local effect only. Nothing is written to the chain.
   state.locked = false;
   state.dailyVolumeUsed = 0;
   state.breachCount = 0;
   state.closeCause = CAUSE_NONE;
   state.chainLogged = false;
+  state.chainClosedSeen = false;
   state.pendingBreach = null;
   saveState(config, state);
   console.log("[RESET] OPEN_VALVE received — alert lock cleared and sector re-armed.");
 
   if (!config.dryRun && state.chainValveClosed === true) {
-    console.warn("[RESET] Chain still reports the valve closed. The owner must run reset-sector.js.");
+    console.warn("[RESET] The chain still reports this valve CLOSED. The owner must run scripts/admin/reset-sector.js.");
   }
 }
 
@@ -272,15 +354,16 @@ function onFlowMessage(config, state, payload) {
     return;
   }
 
-  const nodeId = data.node_id;
-  const flowRate = typeof data.flow_rate === "number" ? data.flow_rate : Number(data.flow_rate);
-  if (!nodeId || typeof flowRate !== "number" || Number.isNaN(flowRate) || flowRate < 0 || flowRate >= 500) {
+  const nodeId = data && typeof data === "object" ? data.node_id : undefined;
+  const raw = data && typeof data === "object" ? data.flow_rate : undefined;
+  // Only real numbers or numeric strings. null, "", booleans and objects are dropped.
+  const flowRate = typeof raw === "number" ? raw : typeof raw === "string" ? parseFloat(raw) : NaN;
+  if (!nodeId || typeof nodeId !== "string" || Number.isNaN(flowRate) || flowRate < 0 || flowRate >= 500) {
     console.log("[FILTERED] Dropped invalid reading:", data);
     return;
   }
 
-  const known =
-    nodeId === config.upstreamNodeId || config.downstream.includes(nodeId);
+  const known = nodeId === config.upstreamNodeId || config.downstream.includes(nodeId);
   if (!known) {
     if (!state.unexpectedLogged.has(nodeId)) {
       state.unexpectedLogged.add(nodeId);
@@ -297,6 +380,7 @@ function onFlowMessage(config, state, payload) {
   state.sensors[nodeId] = { value: cleaned, timestamp: now };
 
   if (nodeId === config.upstreamNodeId) {
+    // Volume by real elapsed time, capped so a long silence cannot add a huge block.
     let dt = 0;
     if (state.lastUpstreamMs != null) {
       dt = (now - state.lastUpstreamMs) / 1000;
@@ -308,10 +392,14 @@ function onFlowMessage(config, state, payload) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Evaluation tick
+// ---------------------------------------------------------------------------
 function evaluate(config, state, chain) {
   const now = Date.now();
   rollDay(config, state, chain, now);
 
+  // Warm-up gate: no decision before every required sensor has reported once.
   const waiting = missingSensors(config, state);
   if (waiting.length > 0) {
     logWarmup(state, waiting, now);
@@ -328,6 +416,7 @@ function evaluate(config, state, chain) {
       `Volume Used=${state.dailyVolumeUsed.toFixed(2)} L`
   );
 
+  // Freshness. A stale sensor never closes the valve; the quota check still runs.
   const stale = staleSensors(config, state, now);
   if (stale.length > 0) {
     const signature = stale.join(",");
@@ -347,6 +436,7 @@ function evaluate(config, state, chain) {
     console.log("[SENSOR_STALE] clear");
   }
 
+  // Snapshot window: only warm and fresh ticks.
   state.window.n += 1;
   state.window.up += upstream;
   state.window.down += downstream;
@@ -354,6 +444,7 @@ function evaluate(config, state, chain) {
 
   if (state.locked) return;
 
+  // Leak: must hold for BREACH_CONSECUTIVE ticks. Leak takes precedence over quota.
   if (deltaQ > state.leakThreshold) {
     state.breachCount += 1;
     if (state.breachCount >= config.breachConsecutive) {
@@ -371,11 +462,12 @@ function evaluate(config, state, chain) {
 function triggerBreach(config, state, chain, reason, downstream, deltaQ) {
   if (state.locked) return;
 
-  state.openedLocally = false;
   state.locked = true;
   state.closeCause = reason === "ANOMALY_DETECTED" ? CAUSE_LEAK : CAUSE_QUOTA;
   state.chainLogged = false;
+  state.chainClosedSeen = false;
   state.breachCount = 0;
+  state.breachSeq += 1;
   state.pendingBreach = {
     upstream: scale(state.sensors[config.upstreamNodeId].value),
     downstream: scale(downstream),
@@ -383,9 +475,16 @@ function triggerBreach(config, state, chain, reason, downstream, deltaQ) {
     volume: scale(state.dailyVolumeUsed),
     quota: scale(state.quota),
   };
-  saveState(config, state);
 
+  // 1. The valve first. Nothing below may delay or undo this.
   publish(state.client, "CLOSE_VALVE", reason);
+
+  // 2. Then remember it, then (live mode) queue the chain write.
+  try {
+    saveState(config, state);
+  } catch (err) {
+    console.error("[STATE] Save failed:", err.message);
+  }
 
   if (config.dryRun) {
     console.log("[DRY RUN] Skipping blockchain transaction. Scaled uint256 payload:", state.pendingBreach);
@@ -393,12 +492,21 @@ function triggerBreach(config, state, chain, reason, downstream, deltaQ) {
   }
 
   const payload = state.pendingBreach;
-  enqueue(chain, () => sendBreach(config, state, chain, payload));
+  const seq = state.breachSeq;
+  enqueue(chain, () => sendBreach(config, state, chain, payload, seq));
 }
 
+// ---------------------------------------------------------------------------
+// Snapshots
+// ---------------------------------------------------------------------------
 function flushSnapshot(config, state, chain) {
   if (state.window.n === 0) {
     console.log("[SNAPSHOT] Window empty, skipped.");
+    return;
+  }
+  if (!config.dryRun && state.snapshotBusy) {
+    // The previous snapshot has not left the queue yet (chain slow or halted). Keep accumulating.
+    console.log("[SNAPSHOT] Previous snapshot still in flight, skipped.");
     return;
   }
 
@@ -416,43 +524,120 @@ function flushSnapshot(config, state, chain) {
     return;
   }
 
-  enqueue(chain, () => sendSnapshot(chain, config, payload));
+  state.snapshotBusy = true;
+  enqueue(chain, () => sendSnapshot(config, state, chain, payload)).finally(() => {
+    state.snapshotBusy = false;
+  });
 }
 
+// ---------------------------------------------------------------------------
+// Daily rollover
+// ---------------------------------------------------------------------------
 function rollDay(config, state, chain, now) {
-  const today = dayIndexAt(now, state.dayOffsetSeconds);
+  const today = todayIndex(state, now);
   if (today <= state.dayIndex) return;
 
-  const cause = state.closeCause;
-  const wasLocked = state.locked;
   state.dayIndex = today;
-  state.dailyVolumeUsed = 0;
+  state.dailyVolumeUsed = 0; // accounting is local, so it resets straight away
   state.window = emptyWindow();
-  saveState(config, state);
   console.log(`[DAY] Rolled local volume to day ${today}.`);
 
   if (config.dryRun) {
-    if (wasLocked && cause === CAUSE_QUOTA) {
-      state.chainValveClosed = false;
-      publish(state.client, "OPEN_VALVE", "DAILY_ROLLOVER");
-      clearLock(state);
-      saveState(config, state);
-    }
-    return;
+    applyDryRunRollover(config, state);
+  } else {
+    beginRollover(config, state, chain);
   }
+  saveState(config, state);
+}
 
-  beginRollover(config, state, chain);
+function applyDryRunRollover(config, state) {
+  if (state.locked && state.closeCause === CAUSE_QUOTA) {
+    publish(state.client, "OPEN_VALVE", "DAILY_ROLLOVER");
+    clearLock(state);
+  }
+  saveState(config, state);
 }
 
 function beginRollover(config, state, chain) {
   if (config.dryRun || state.rolloverQueued) return;
   state.rolloverQueued = true;
   state.needsRollover = false;
-  enqueue(chain, () => sendRollover(config, state, chain));
+  enqueue(chain, () => runRollover(config, state, chain));
 }
 
+async function runRollover(config, state, chain) {
+  const target = state.dayIndex;
+
+  // Ask the chain first. If the sector's stored day already reached the day we want (the owner
+  // rolled it over, or an earlier attempt of ours landed), there is nothing to send.
+  const stored = await readStoredDay(config, chain);
+  if (stored == null) return scheduleRolloverRetry(config, state, chain, ROLLOVER_RETRY_MS, "could not read the stored day");
+  if (stored >= target) return rolloverAlreadyDone(config, state, stored, target);
+
+  const result = await submitOnce(chain, "Rollover", state.rolloverTrack, (o) =>
+    chain.registry.rolloverQuotaDay(config.sectorIdBytes, { ...o, gasLimit: ROLLOVER_GAS_LIMIT })
+  );
+
+  if (result.status === "confirmed") {
+    state.rolloverTrack = newTrack();
+    finishRollover(config, state);
+    return;
+  }
+  if (result.status === "reverted") state.rolloverTrack = newTrack();
+
+  // The send failed or was refused. Check the chain again before deciding what that means.
+  const after = await readStoredDay(config, chain);
+  if (after != null && after >= target) return rolloverAlreadyDone(config, state, after, target);
+
+  const why = `${result.status}${result.message ? ` (${result.message})` : ""}`;
+  if (after != null) {
+    // Refused by the chain while the stored day is still behind: its clock has not reached the new day yet.
+    return scheduleRolloverRetry(config, state, chain, ROLLOVER_NOT_YET_MS, `${why}, stored day ${after} < ${target}, chain clock not at the new day yet`);
+  }
+  scheduleRolloverRetry(config, state, chain, ROLLOVER_RETRY_MS, why);
+}
+
+/** The sector's stored day on the chain, or null if it cannot be read right now. */
+async function readStoredDay(config, chain) {
+  try {
+    return Number(await chain.registry.quotaDay(config.sectorIdBytes));
+  } catch (err) {
+    console.error("[CHAIN] Could not read quotaDay:", err.shortMessage || err.message || err);
+    return null;
+  }
+}
+
+function rolloverAlreadyDone(config, state, stored, target) {
+  console.log(`[CHAIN] Rollover already done on-chain (stored day ${stored} >= ${target}). Nothing to send.`);
+  state.rolloverTrack = newTrack();
+  finishRollover(config, state);
+}
+
+// Retry outside the queue so a breach write behind it is never held up.
+function scheduleRolloverRetry(config, state, chain, delayMs, why) {
+  console.error(`[CHAIN] Rollover not finished: ${why}. Retry in ${Math.round(delayMs / 1000)}s.`);
+  setTimeout(() => enqueue(chain, () => runRollover(config, state, chain)), delayMs);
+}
+
+function finishRollover(config, state) {
+  state.rolloverQueued = false;
+  console.log("[CHAIN] Rollover confirmed.");
+  // Only a quota closure reopens. A leak closure stays until the owner resets it.
+  if (state.locked && state.closeCause === CAUSE_QUOTA) {
+    publish(state.client, "OPEN_VALVE", "DAILY_ROLLOVER");
+    clearLock(state);
+  }
+  saveState(config, state);
+}
+
+// ---------------------------------------------------------------------------
+// Chain: one provider, one wallet, one serial queue
+// ---------------------------------------------------------------------------
 async function initChain(config, chain) {
-  chain.provider = new ethers.JsonRpcProvider(config.rpcUrl, CHAIN_ID, { staticNetwork: true });
+  const request = new ethers.FetchRequest(config.rpcUrl);
+  request.timeout = RPC_TIMEOUT_MS;
+  chain.provider = new ethers.JsonRpcProvider(request, CHAIN_ID, { staticNetwork: true });
+
   if (config.privateKey) {
     chain.wallet = new ethers.Wallet(config.privateKey, chain.provider);
   } else {
@@ -465,26 +650,41 @@ async function initChain(config, chain) {
   console.log(`[CHAIN] Reporter ${chain.wallet.address} via ${config.rpcUrl}`);
 }
 
-async function pollChain(config, state, chain, announceAdoptedClose) {
-  if (config.dryRun) return;
+/** Serial queue: one chain write at a time, in order. Jobs wait for the wallet to exist. */
+function enqueue(chain, job) {
+  const run = chain.queue.then(() => chain.ready).then(job);
+  chain.queue = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+function logPollError(err) {
+  console.error("[CHAIN] Poll failed:", err.shortMessage || err.message || err);
+}
+
+async function pollChain(config, state, chain) {
+  if (config.dryRun || !chain.registry) return;
 
   let sector;
   let leakRaw;
   let offsetRaw;
-  let causeRaw;
+  let lengthRaw;
+  let shiftRaw;
   try {
-    [sector, leakRaw, offsetRaw, causeRaw] = await Promise.all([
+    [sector, leakRaw, offsetRaw, lengthRaw, shiftRaw] = await Promise.all([
       chain.registry.sectorRegistry(config.sectorIdBytes),
       chain.registry.leakThreshold(),
       chain.registry.dayOffsetSeconds(),
-      chain.registry.closeCause(config.sectorIdBytes),
+      chain.registry.dayLengthSeconds(),
+      chain.registry.manualDayShift(),
     ]);
   } catch (err) {
     if (!state.fallbackLogged) {
       console.error("[CHAIN] RPC unreachable or read failed. Using .env fallback.", err.shortMessage || err.message);
       state.fallbackLogged = true;
     }
-    state.usingFallback = true;
     return;
   }
 
@@ -493,16 +693,16 @@ async function pollChain(config, state, chain, announceAdoptedClose) {
       console.error(`[CHAIN] ${config.sectorId} is missing on-chain. Using .env fallback.`);
       state.fallbackLogged = true;
     }
-    state.usingFallback = true;
     return;
   }
-
   state.fallbackLogged = false;
-  state.usingFallback = false;
 
   const quota = fromChain(sector.dailyQuotaLimit);
   const leak = fromChain(leakRaw);
   const offset = Number(offsetRaw);
+  const dayLength = Number(lengthRaw);
+  const shift = Number(shiftRaw);
+
   if (quota !== state.quota) {
     console.log(`[CHAIN] dailyQuotaLimit ${state.quota} -> ${quota}`);
     state.quota = quota;
@@ -511,219 +711,183 @@ async function pollChain(config, state, chain, announceAdoptedClose) {
     console.log(`[CHAIN] leakThreshold ${state.leakThreshold} -> ${leak}`);
     state.leakThreshold = leak;
   }
-  if (offset !== state.dayOffsetSeconds) {
-    console.log(`[CHAIN] dayOffsetSeconds ${state.dayOffsetSeconds} -> ${offset}`);
+  if (offset !== state.dayOffsetSeconds || dayLength !== state.dayLengthSeconds || shift !== state.dayShift) {
+    console.log(
+      `[CHAIN] day clock: length ${state.dayLengthSeconds}s -> ${dayLength}s, offset ${state.dayOffsetSeconds}s -> ${offset}s, manual shift ${state.dayShift} -> ${shift}`
+    );
+    const now = Date.now();
+    const wasToday = state.dayIndex === todayIndex(state, now);
+    state.dayLengthSeconds = dayLength;
     state.dayOffsetSeconds = offset;
+    state.dayShift = shift;
+    // First sync only: a .env fallback that was ahead of the chain must not look like a day change.
+    // A later increase (the owner advanced the day) is a real new day: evaluate() rolls it over.
+    if (!state.offsetSynced && wasToday) {
+      const t = todayIndex(state, now);
+      if (t < state.dayIndex) state.dayIndex = t;
+    }
+    saveState(config, state);
   }
+  state.offsetSynced = true;
 
   state.chainValveClosed = Boolean(sector.isValveClosed);
-  if (state.openedLocally && state.chainValveClosed === false) {
-    state.openedLocally = false;
-  }
 
-  // A manual OPEN_VALVE stays local until the owner resets the chain. Do not force it shut again.
-  if (!state.locked && state.chainValveClosed && !state.openedLocally) {
-    state.locked = true;
-    state.chainLogged = true;
-    state.closeCause = Number(causeRaw);
-    state.pendingBreach = null;
-    saveState(config, state);
-    console.log("[CHAIN] Adopted on-chain valve closure.");
-    if (announceAdoptedClose) {
-      publish(state.client, "CLOSE_VALVE", reasonFromCause(state.closeCause));
+  // Locked, breach confirmed on-chain, and the chain shows closed: remember that we saw it.
+  if (state.locked && state.chainLogged && state.chainValveClosed) {
+    if (!state.chainClosedSeen) {
+      state.chainClosedSeen = true;
+      saveState(config, state);
     }
   }
 
-  if (state.locked && state.chainLogged && state.chainValveClosed === false) {
+  // Owner reset sync. Never while the breach write is still pending (chainLogged false).
+  // chainClosedSeen guards against reopening when the chain never closed for this breach
+  // (ΔQ or volume within rounding of the threshold, so the on-chain re-check disagreed).
+  if (state.locked && state.chainLogged && state.chainClosedSeen && !state.chainValveClosed) {
     console.log("[CHAIN] Owner reset observed.");
-    state.chainValveClosed = false;
     publish(state.client, "OPEN_VALVE", "OWNER_RESET");
     clearLock(state);
     state.dailyVolumeUsed = 0;
     saveState(config, state);
+  } else if (state.locked && state.chainLogged && !state.chainClosedSeen && !state.chainValveClosed) {
+    if (!state.mismatchLogged) {
+      state.mismatchLogged = true;
+      console.warn(
+        "[CHAIN] Breach is logged but the chain does not show a closed valve (value within rounding of the threshold?). " +
+          "Valve stays closed locally. Reopen with OPEN_VALVE."
+      );
+    }
+  } else {
+    state.mismatchLogged = false;
   }
 }
 
-function enqueue(chain, job) {
-  const run = chain.queue.then(job, job);
-  chain.queue = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
+/**
+ * One attempt to get a transaction confirmed. Safe to call again with the same `track`:
+ * a transaction that is still in the pool is waited for, never sent twice.
+ * Returns { status: "confirmed" | "reverted" | "pending" | "error", message?, err? }.
+ */
+async function submitOnce(chain, label, track, send) {
+  try {
+    if (track.hash) {
+      const receipt = await chain.provider.getTransactionReceipt(track.hash);
+      if (receipt) return { status: receipt.status === 1 ? "confirmed" : "reverted", message: track.hash };
+      const found = await chain.provider.getTransaction(track.hash);
+      if (found) {
+        const late = await waitReceipt(chain, track.hash, CONFIRM_TIMEOUT_MS);
+        if (late) return { status: late.status === 1 ? "confirmed" : "reverted", message: track.hash };
+        return { status: "pending", message: "still in the pool, chain not confirming" };
+      }
+      // Dropped from the pool: send again with the same nonce.
+      track.resendNonce = track.nonce;
+      track.hash = null;
+    }
+
+    const overrides = track.resendNonce == null ? { ...LEGACY } : { ...LEGACY, nonce: track.resendNonce };
+    const tx = await send(overrides);
+    track.resendNonce = null;
+    track.hash = tx.hash;
+    track.nonce = tx.nonce;
+    console.log(`[CHAIN] ${label} submitted ${tx.hash}`);
+
+    const receipt = await waitReceipt(chain, tx.hash, CONFIRM_TIMEOUT_MS);
+    if (!receipt) {
+      console.error(`[CHAIN] ${label} confirmation timeout ${tx.hash}`);
+      return { status: "pending", message: "confirmation timeout" };
+    }
+    return { status: receipt.status === 1 ? "confirmed" : "reverted", message: tx.hash };
+  } catch (err) {
+    const message = err.shortMessage || err.message || String(err);
+    if (err.code === "NONCE_EXPIRED" || /nonce/i.test(message)) track.resendNonce = null;
+    if (err.code === "CALL_EXCEPTION") return { status: "reverted", message, err };
+    return { status: "error", message, err };
+  }
 }
 
-async function sendBreach(config, state, chain, payload) {
-  let delay = 5000;
-  let pending = null;
-  let resendNonce = null;
-
+async function waitReceipt(chain, hash, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
   for (;;) {
-    try {
-      if (pending) {
-        const receipt = await chain.provider.getTransactionReceipt(pending.hash);
-        if (receipt && receipt.status === 1) {
-          markBreachLogged(config, state);
-          console.log(`[CHAIN] Breach confirmed ${pending.hash}`);
-          return;
-        }
-        if (receipt && receipt.status === 0) {
-          console.error(`[CHAIN] Breach reverted ${pending.hash}. Lock stays. Not retrying a revert.`);
-          return;
-        }
-        const found = await chain.provider.getTransaction(pending.hash);
-        if (found) {
-          await sleep(delay);
-          delay = Math.min(delay * 2, 60000);
-          continue;
-        }
-        resendNonce = pending.nonce;
-        pending = null;
-      }
+    const receipt = await chain.provider.getTransactionReceipt(hash);
+    if (receipt) return receipt;
+    if (Date.now() >= deadline) return null;
+    await sleep(2000);
+  }
+}
 
-      const overrides = resendNonce === null ? LEGACY : { ...LEGACY, nonce: resendNonce };
-      resendNonce = null;
-      const tx = await chain.registry.updateSectorState(
+/** Breach write: retried until confirmed (backoff 5 s up to 60 s). Never touches the lock on failure. */
+async function sendBreach(config, state, chain, payload, seq) {
+  const track = newTrack();
+  let delay = RETRY_MIN_MS;
+  for (;;) {
+    const result = await submitOnce(chain, "Breach", track, (o) =>
+      chain.registry.updateSectorState(
         config.sectorIdBytes,
         payload.upstream,
         payload.downstream,
         payload.deltaQ,
         payload.volume,
         payload.quota,
-        overrides
-      );
-      pending = { hash: tx.hash, nonce: tx.nonce };
-      console.log(`[CHAIN] Breach submitted ${tx.hash}`);
-
-      const receipt = await Promise.race([tx.wait(), sleep(CONFIRM_TIMEOUT_MS).then(() => null)]);
-      if (receipt && receipt.status === 1) {
-        markBreachLogged(config, state);
-        console.log(`[CHAIN] Breach confirmed ${tx.hash}`);
-        return;
-      }
-      if (receipt && receipt.status === 0) {
-        console.error(`[CHAIN] Breach reverted ${tx.hash}. Lock stays. Not retrying a revert.`);
-        return;
-      }
-      console.error(`[CHAIN] Breach confirmation timeout ${tx.hash}`);
-    } catch (err) {
-      const msg = err.shortMessage || err.message || String(err);
-      console.error(`[CHAIN] Breach error: ${msg}`);
-      if (err.code === "CALL_EXCEPTION" || err.receipt) {
-        console.error("[CHAIN] Breach reverted. Lock stays. Not retrying a revert.");
-        return;
-      }
-      pending = null;
-    }
-
-    await sleep(delay);
-    delay = Math.min(delay * 2, 60000);
-  }
-}
-
-async function sendSnapshot(chain, config, payload) {
-  try {
-    const tx = await chain.telemetry.recordSnapshot(
-      config.sectorIdBytes,
-      payload.upstream,
-      payload.downstream,
-      payload.deltaQ,
-      payload.volume,
-      LEGACY
+        o
+      )
     );
-    console.log(`[CHAIN] Snapshot submitted ${tx.hash}`);
-    const receipt = await Promise.race([tx.wait(), sleep(CONFIRM_TIMEOUT_MS).then(() => null)]);
-    if (!receipt) {
-      console.error(`[CHAIN] Snapshot confirmation timeout ${tx.hash}. Will try the next interval.`);
+
+    if (result.status === "confirmed") {
+      console.log(`[CHAIN] Breach confirmed ${result.message}`);
+      markBreachLogged(config, state, chain, seq);
       return;
     }
-    if (receipt.status === 0) {
-      console.error(`[CHAIN] Snapshot reverted ${tx.hash}`);
-      return;
+
+    if (result.status === "reverted") {
+      // E.g. the reporter was removed or the sector is missing. Keep trying: the owner can fix it.
+      track.hash = null;
+      track.resendNonce = null;
     }
-    console.log(`[CHAIN] Snapshot confirmed ${tx.hash}`);
-  } catch (err) {
-    const msg = err.shortMessage || err.message || String(err);
-    if (/TooSoon/i.test(msg)) {
-      console.log("[CHAIN] Snapshot rejected: TooSoon");
-      return;
-    }
-    console.error(`[CHAIN] Snapshot failed: ${msg}`);
+    console.error(`[CHAIN] Breach ${result.status}: ${result.message || ""}. Retry in ${Math.round(delay / 1000)}s. Valve stays closed.`);
+    await sleep(delay);
+    delay = Math.min(delay * 2, RETRY_MAX_MS);
   }
 }
 
-async function sendRollover(config, state, chain) {
-  let pending = null;
-  let resendNonce = null;
-  for (;;) {
-    try {
-      if (pending) {
-        const receipt = await chain.provider.getTransactionReceipt(pending.hash);
-        if (receipt && receipt.status === 1) {
-          finishRollover(config, state);
-          console.log(`[CHAIN] Rollover confirmed ${pending.hash}`);
-          return;
-        }
-        if (receipt && receipt.status === 0) {
-          console.error(`[CHAIN] Rollover reverted ${pending.hash}. Retry in 60s.`);
-          pending = null;
-          resendNonce = null;
-          await sleep(60000);
-          continue;
-        }
-        const found = await chain.provider.getTransaction(pending.hash);
-        if (found) {
-          await sleep(60000);
-          continue;
-        }
-        resendNonce = pending.nonce;
-        pending = null;
-      }
-
-      const tx = await chain.registry.rolloverQuotaDay(
-        config.sectorIdBytes,
-        resendNonce === null ? LEGACY : { ...LEGACY, nonce: resendNonce }
-      );
-      resendNonce = null;
-      pending = { hash: tx.hash, nonce: tx.nonce };
-      console.log(`[CHAIN] Rollover submitted ${tx.hash}`);
-      const receipt = await Promise.race([tx.wait(), sleep(CONFIRM_TIMEOUT_MS).then(() => null)]);
-      if (receipt && receipt.status === 1) {
-        finishRollover(config, state);
-        console.log(`[CHAIN] Rollover confirmed ${tx.hash}`);
-        return;
-      }
-      console.error("[CHAIN] Rollover not confirmed. Retry in 60s.");
-    } catch (err) {
-      console.error(`[CHAIN] Rollover failed, retry in 60s: ${err.shortMessage || err.message || err}`);
-      pending = null;
-    }
-    await sleep(60000);
-  }
-}
-
-function finishRollover(config, state) {
-  state.rolloverQueued = false;
-  if (state.locked && state.closeCause === CAUSE_QUOTA) {
-    state.chainValveClosed = false;
-    publish(state.client, "OPEN_VALVE", "DAILY_ROLLOVER");
-    clearLock(state);
-  }
-  saveState(config, state);
-}
-
-function markBreachLogged(config, state) {
+function markBreachLogged(config, state, chain, seq) {
+  if (state.breachSeq !== seq) return; // a newer breach owns the state now
   state.pendingBreach = null;
-  if (state.locked && !state.openedLocally) {
+  if (state.locked) {
     state.chainLogged = true;
+    // Read the chain right away so the owner-reset sync knows the chain was closed.
+    pollChain(config, state, chain).catch(logPollError);
   }
   saveState(config, state);
+}
+
+/** Snapshot: no retry. Skip and try again at the next interval. */
+async function sendSnapshot(config, state, chain, payload) {
+  const result = await submitOnce(chain, "Snapshot", newTrack(), (o) =>
+    chain.telemetry.recordSnapshot(config.sectorIdBytes, payload.upstream, payload.downstream, payload.deltaQ, payload.volume, { ...o, gasLimit: SNAPSHOT_GAS_LIMIT })
+  );
+  if (result.status === "confirmed") {
+    console.log(`[CHAIN] Snapshot confirmed ${result.message}`);
+    return;
+  }
+  const text = `${result.message || ""} ${result.err && result.err.revert ? result.err.revert.name : ""}`;
+  if (/TooSoon/i.test(text)) {
+    console.log("[CHAIN] Snapshot rejected: TooSoon");
+    return;
+  }
+  console.error(`[CHAIN] Snapshot ${result.status}: ${result.message || ""}. Next try at the next interval.`);
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function newTrack() {
+  return { hash: null, nonce: null, resendNonce: null };
 }
 
 function clearLock(state) {
   state.locked = false;
   state.closeCause = CAUSE_NONE;
   state.chainLogged = false;
+  state.chainClosedSeen = false;
   state.pendingBreach = null;
   state.breachCount = 0;
 }
@@ -752,8 +916,7 @@ function missingSensors(config, state) {
 function staleSensors(config, state, now) {
   const stale = [];
   const limit = config.staleAfterSec * 1000;
-  const required = [config.upstreamNodeId, ...config.downstream];
-  for (const id of required) {
+  for (const id of [config.upstreamNodeId, ...config.downstream]) {
     const sensor = state.sensors[id];
     if (!sensor || now - sensor.timestamp > limit) stale.push(id);
   }
@@ -762,9 +925,7 @@ function staleSensors(config, state, now) {
 
 function downstreamSum(config, state) {
   let sum = 0;
-  for (const id of config.downstream) {
-    sum += state.sensors[id].value;
-  }
+  for (const id of config.downstream) sum += state.sensors[id].value;
   return sum;
 }
 
@@ -782,10 +943,14 @@ function saveState(config, state) {
   const body = JSON.stringify(
     {
       dayIndex: state.dayIndex,
+      dayLengthSeconds: state.dayLengthSeconds,
+      dayOffsetSeconds: state.dayOffsetSeconds,
+      dayShift: state.dayShift,
       dailyVolumeUsed: state.dailyVolumeUsed,
       locked: state.locked,
       closeCause: state.closeCause,
       chainLogged: state.chainLogged,
+      chainClosedSeen: state.chainClosedSeen,
       pendingBreach: state.pendingBreach,
     },
     null,
@@ -798,11 +963,11 @@ function statePath(config) {
   return path.join(config.stateDir, `${config.sectorId}.json`);
 }
 
+/** Write to a temp file, then rename over the target, so a crash never leaves half a file. */
 function atomicWrite(file, contents) {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, contents);
   try {
-    if (fs.existsSync(file)) fs.rmSync(file);
     fs.renameSync(tmp, file);
   } catch (err) {
     fs.copyFileSync(tmp, file);
@@ -814,15 +979,20 @@ function emptyWindow() {
   return { n: 0, up: 0, down: 0, dq: 0 };
 }
 
-function dayIndexAt(nowMs, offsetSeconds) {
-  return Math.floor((Math.floor(nowMs / 1000) + offsetSeconds) / 86400);
+/** Same formula as the contract: (timestamp + offset) / dayLength + manual shift. */
+function dayIndexAt(nowMs, offsetSeconds, dayLengthSeconds, dayShift) {
+  return Math.floor((Math.floor(nowMs / 1000) + offsetSeconds) / dayLengthSeconds) + dayShift;
+}
+
+function todayIndex(state, nowMs) {
+  return dayIndexAt(nowMs, state.dayOffsetSeconds, state.dayLengthSeconds, state.dayShift);
 }
 
 function reasonFromCause(cause) {
-  if (cause === CAUSE_QUOTA) return "QUOTA_EXCEEDED";
-  return "ANOMALY_DETECTED";
+  return cause === CAUSE_QUOTA ? "QUOTA_EXCEEDED" : "ANOMALY_DETECTED";
 }
 
+// Scaling lives here and nowhere else: x100 going to the chain, /100 coming back.
 function scale(value) {
   return Math.round(value * 100);
 }

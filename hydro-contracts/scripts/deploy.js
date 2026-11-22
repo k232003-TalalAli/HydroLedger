@@ -26,10 +26,12 @@ async function main() {
     Sector_B: litersToScaled("INITIAL_QUOTA_LITERS_B"),
     Sector_C: litersToScaled("INITIAL_QUOTA_LITERS_C"),
   };
-  const minInterval = BigInt(process.env.MIN_SNAPSHOT_INTERVAL_SECONDS || "540");
+  const minInterval = BigInt(process.env.MIN_SNAPSHOT_INTERVAL_SECONDS || "210");
+  const dayLength = BigInt(process.env.DAY_LENGTH_SECONDS || "600");
+  if (dayLength <= 0n) throw new Error("DAY_LENGTH_SECONDS must be greater than 0.");
 
   const Registry = await ethers.getContractFactory("WaterQuotaRegistry");
-  const registry = await Registry.deploy(LEGACY);
+  const registry = await Registry.deploy(dayLength, LEGACY);
   await registry.waitForDeployment();
   const registryAddress = await registry.getAddress();
   console.log(`WaterQuotaRegistry ${registryAddress}`);
@@ -60,6 +62,7 @@ async function main() {
     blockNumber,
     sectorIds,
     minSnapshotIntervalSeconds: minInterval.toString(),
+    dayLengthSeconds: dayLength.toString(),
   };
 
   const dir = path.join(__dirname, "..", "deployments");
