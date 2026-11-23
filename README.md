@@ -2,14 +2,14 @@
 
 This guide takes a laptop that has **nothing installed** (no Mosquitto, no Hardhat, no `node_modules`, no wallet) to a running sector that writes to the shared blockchain, and shows you how to look at the data afterwards. Follow the steps in order.
 
-| | Laptop B | Laptop C |
-|---|---|---|
-| Sector | `Sector_B` | `Sector_C` |
-| Besu node (Docker) | `hydro-node3` | `hydro-node4` |
-| Env file for the node | `envs\B.env` | `envs\C.env` |
-| Local RPC | `http://127.0.0.1:8545` | `http://127.0.0.1:8545` |
+|                                                | Laptop B                                     | Laptop C                                     |
+| ---------------------------------------------- | -------------------------------------------- | -------------------------------------------- |
+| Sector                                         | `Sector_B`                                   | `Sector_C`                                   |
+| Besu node (Docker)                             | `hydro-node3`                                | `hydro-node4`                                |
+| Env file for the node                          | `envs\B.env`                                 | `envs\C.env`                                 |
+| Local RPC                                      | `http://127.0.0.1:8545`                      | `http://127.0.0.1:8545`                      |
 | Reporter address (already registered on-chain) | `0xD5dED0965DC92CA48ff2B373Dd374da1f3f61B49` | `0xe03f702123677fFb9030724447fb9B9da6b157FE` |
-| Node-RED flow to import | `simulation\flows.json` | `simulation\flows.sector-c.json` |
+| Node-RED flow to import                        | `simulation\flows.json`                      | `simulation\flows.sector-c.json`             |
 
 Laptop A (the host and contract owner) must have its two Besu containers running **before** B and C start.
 
@@ -118,6 +118,7 @@ Start menu, type `PowerShell`, right-click **Run as administrator**:
 ```powershell
 New-NetFirewallRule -DisplayName "Besu P2P TCP" -Direction Inbound -Protocol TCP -LocalPort 30303 -RemoteAddress 100.64.0.0/10 -Action Allow
 New-NetFirewallRule -DisplayName "Besu P2P UDP" -Direction Inbound -Protocol UDP -LocalPort 30303 -RemoteAddress 100.64.0.0/10 -Action Allow
+New-NetFirewallRule -DisplayName "Mosquitto Tailnet" -Direction Inbound -Protocol TCP -LocalPort 1883 -RemoteAddress 100.64.0.0/10 -Action Allow
 ```
 
 "Rule already exists" is fine.
@@ -204,6 +205,19 @@ EXPECTED_DOWNSTREAM=Sector_C
 ```
 
 Laptops B and C both use `RPC_URL=http://127.0.0.1:8545`. Only Laptop A uses 8546. If you want a safe first run that makes no chain calls, set `DRY_RUN=true`, test, then change it to `false`.
+
+Also, on laptop B and C, open broker/mosquitto.config, find this section:
+
+# --- Active listener: this laptop only -------------------------------------------------
+listener 1883 127.0.0.1
+allow_anonymous true
+
+log_dest stdout
+log_type all
+
+# -----------------------------------------------------------------------------
+
+and replace "listener 1883 127.0.0.1" with "listener 1883 0.0.0.0".
 
 ### 5b. Settings for the read scripts: `hydro-contracts\.env`
 

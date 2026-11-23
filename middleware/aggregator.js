@@ -341,7 +341,7 @@ function onValveMessage(config, state, payload) {
   console.log("[RESET] OPEN_VALVE received — alert lock cleared and sector re-armed.");
 
   if (!config.dryRun && state.chainValveClosed === true) {
-    console.warn("[RESET] The chain still reports this valve CLOSED. The owner must run scripts/admin/reset-sector.js.");
+    console.warn("[RESET] The chain still reports this valve CLOSED, until the Bootnode approves the reset.");
   }
 }
 
@@ -388,7 +388,8 @@ function onFlowMessage(config, state, payload) {
       if (dt < 0) dt = 0;
     }
     state.lastUpstreamMs = now;
-    state.dailyVolumeUsed += (cleaned / 60) * dt;
+    // A closed valve passes no water, so nothing is counted while the sector is locked.
+    if (!state.locked) state.dailyVolumeUsed += (cleaned / 60) * dt;
   }
 }
 
@@ -413,7 +414,8 @@ function evaluate(config, state, chain) {
     `[TELEMETRY] Upstream=${upstream.toFixed(2)} | ` +
       `Total Downstream=${downstream.toFixed(2)} | ` +
       `DeltaQ=${deltaQ.toFixed(2)} | ` +
-      `Volume Used=${state.dailyVolumeUsed.toFixed(2)} L`
+      `Volume Used=${state.dailyVolumeUsed.toFixed(2)} L` +
+      (state.locked ? " | VALVE CLOSED: recorded as 0 flow" : "")
   );
 
   // Freshness. A stale sensor never closes the valve; the quota check still runs.
@@ -436,11 +438,14 @@ function evaluate(config, state, chain) {
     console.log("[SENSOR_STALE] clear");
   }
 
-  // Snapshot window: only warm and fresh ticks.
+  // Snapshot window: only warm and fresh ticks. With the valve closed no water moves, so the
+  // snapshot records 0 flow even if a simulator (or a faulty sensor) keeps publishing a value.
   state.window.n += 1;
-  state.window.up += upstream;
-  state.window.down += downstream;
-  state.window.dq += deltaQ;
+  if (!state.locked) {
+    state.window.up += upstream;
+    state.window.down += downstream;
+    state.window.dq += deltaQ;
+  }
 
   if (state.locked) return;
 

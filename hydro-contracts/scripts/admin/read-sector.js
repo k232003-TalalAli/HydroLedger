@@ -31,28 +31,44 @@ async function main() {
   console.log(`registry ${deployment.registry}`);
   console.log(`telemetry ${deployment.telemetry}`);
   console.log(`sector ${sectorName} ${id}`);
-  console.log("sectorRegistry:");
-  console.log(`  upstreamFlowRate   ${sector.upstreamFlowRate} (${Number(sector.upstreamFlowRate) / 100} L/min)`);
-  console.log(`  downstreamFlowRate ${sector.downstreamFlowRate} (${Number(sector.downstreamFlowRate) / 100} L/min)`);
-  console.log(`  deltaQ             ${sector.deltaQ} (${Number(sector.deltaQ) / 100} L/min)`);
-  console.log(`  dailyVolumeUsed    ${sector.dailyVolumeUsed} (${Number(sector.dailyVolumeUsed) / 100} L)`);
-  console.log(`  dailyQuotaLimit    ${sector.dailyQuotaLimit} (${Number(sector.dailyQuotaLimit) / 100} L)`);
-  console.log(`  isValveClosed      ${sector.isValveClosed}`);
-  console.log(`  lastUpdated        ${sector.lastUpdated}`);
-  console.log(`closeCause ${cause} (${causeName})`);
+  const n = (v) => (Number(v) / 100).toFixed(2);
+  const when = (ts) =>
+    Number(ts) === 0
+      ? "never"
+      : new Date(Number(ts) * 1000).toLocaleString("en-GB", {
+          day: "2-digit", month: "short", year: "numeric",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+        });
   const [chainDay, dayLength, dayShift] = await Promise.all([
     registry.currentDay(),
     registry.dayLengthSeconds(),
     registry.manualDayShift(),
   ]);
-  console.log(`quotaDay ${day} (chain currentDay ${chainDay}, day length ${dayLength} s, manual shift ${dayShift})`);
-  console.log("latestSnapshot:");
-  console.log(`  upstreamFlowRate   ${snap.upstreamFlowRate}`);
-  console.log(`  downstreamFlowRate ${snap.downstreamFlowRate}`);
-  console.log(`  deltaQ             ${snap.deltaQ}`);
-  console.log(`  dailyVolumeUsed    ${snap.dailyVolumeUsed}`);
-  console.log(`  timestamp          ${snap.timestamp}`);
-  console.log(`snapshotCount ${count}`);
+
+  console.log("");
+  console.log(`Valve:        ${sector.isValveClosed ? `CLOSED (cause: ${causeName})` : "OPEN"}`);
+  console.log(`Daily quota:  ${n(sector.dailyQuotaLimit)} L`);
+  console.log(`Quota day:    #${day} (chain is on day #${chainDay}, a day lasts ${dayLength} s, manual shift ${dayShift})`);
+  console.log("");
+  console.log("Last report stored in the registry");
+  console.log("  (only written when the aggregator reports a leak/quota breach: NOT a live reading,");
+  console.log("   and not an average. It is the single reading the breach was decided on.)");
+  console.log(`  Reported at:          ${when(sector.lastUpdated)}`);
+  console.log(`  Upstream flow:        ${n(sector.upstreamFlowRate)} L/min`);
+  console.log(`  Downstream flow:      ${n(sector.downstreamFlowRate)} L/min`);
+  console.log(`  Difference (up-down): ${n(sector.deltaQ)} L/min`);
+  console.log(`  Water used that day:  ${n(sector.dailyVolumeUsed)} L at that report (cleared to 0 by an owner reset or a new quota day, so 0 here does not mean no water was used)`);
+  console.log("");
+  if (Number(count) > 0) {
+    console.log(`Latest snapshot (${count} in total; one is written every few minutes, each is an AVERAGE over its window)`);
+    console.log(`  Taken at:             ${when(snap.timestamp)}`);
+    console.log(`  Avg upstream flow:    ${n(snap.upstreamFlowRate)} L/min`);
+    console.log(`  Avg downstream flow:  ${n(snap.downstreamFlowRate)} L/min`);
+    console.log(`  Avg difference:       ${n(snap.deltaQ)} L/min`);
+    console.log(`  Water used that day:  ${n(snap.dailyVolumeUsed)} L (running total at snapshot time)`);
+  } else {
+    console.log("Latest snapshot: none yet");
+  }
 
   const [alerts, resets, rollovers, snapshots] = await Promise.all([
     registry.queryFilter(registry.filters.SectorAlert(id), fromBlock),

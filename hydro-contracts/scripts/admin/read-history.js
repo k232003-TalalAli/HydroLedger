@@ -60,7 +60,22 @@ function buildGroups(entries) {
   let snapshotNo = 0;
   const groups = [{ title: "Setup (before the first snapshot)", detail: null, lines: [] }];
 
+  // Reports that arrive while the valve is already closed change nothing on-chain, and there can be
+  // dozens in a row (one per block). They are folded into ONE line that names the first and last block.
+  // The run can span snapshots; it is closed by any other kind of event (reset, rollover, alert...).
+  let run = null; // { lines, index, first: {block, ts}, last: {block, ts}, count }
+  const runText = (r) => {
+    const tail = "but no alerts were generated because the valve is already closed. Reset is still pending.";
+    if (r.count === 1) return `  block ${r.first.block}  ${fmtTime(r.first.ts)}  A further report arrived, ${tail}`;
+    return (
+      `  block ${r.first.block}  ${fmtTime(r.first.ts)}  -  block ${r.last.block}  ${fmtTime(r.last.ts)}:  ` +
+      `${r.count} further reports, ${tail}`
+    );
+  };
+
   for (const e of entries) {
+    if (e.name !== "SnapshotRecorded" && !(e.name === "Reading" && valveClosed)) run = null;
+
     if (e.name === "SnapshotRecorded") {
       snapshotNo += 1;
       groups.push({
@@ -119,10 +134,19 @@ function buildGroups(entries) {
         valveClosed = false;
         break;
       case "Reading":
-        text = valveClosed
-          ? `The aggregator reported another problem (${readingText(e.reading)}) while the chain still showed the valve closed. ` +
-            "No new alert is recorded because the valve was already closed. The owner reset is still pending."
-          : `Reading reported (${readingText(e.reading)}). No alert was triggered.`;
+        if (valveClosed) {
+          const lines = groups[groups.length - 1].lines;
+          if (run) {
+            run.last = { block: e.block, ts: e.ts };
+            run.count += 1;
+            run.lines[run.index] = runText(run);
+          } else {
+            run = { lines, index: lines.length, first: { block: e.block, ts: e.ts }, last: { block: e.block, ts: e.ts }, count: 1 };
+            lines.push(runText(run));
+          }
+          continue;
+        }
+        text = `Reading reported (${readingText(e.reading)}). No alert was triggered.`;
         break;
       default:
         continue;
