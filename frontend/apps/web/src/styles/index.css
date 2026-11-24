@@ -1,0 +1,75 @@
+@import '@fontsource/space-grotesk/400.css';
+@import '@fontsource/space-grotesk/500.css';
+@import '@fontsource/space-grotesk/700.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/700.css';
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+}
+
+@layer utilities {
+  .label-caps {
+    @apply font-sans text-[11px] uppercase tracking-label text-text-2;
+  }
+
+  .hazard-edge {
+    border-image: var(--hazard) 1;
+  }
+
+  .hazard-bg {
+    background-image: var(--hazard);
+  }
+}
+
+@layer components {
+  .flow-dash {
+    animation: flow-dash-move 1s linear infinite;
+  }
+
+  @keyframes flow-dash-move {
+    to {
+      stroke-dashoffset: -28;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .flow-dash {
+      animation: none;
+    }
+  }
+
+  /* uPlot dark theme tweaks */
+  .uplot {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  .uplot .u-legend {
+    font-size: 11px;
+    color: var(--text-2);
+  }
+}

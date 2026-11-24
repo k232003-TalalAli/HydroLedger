@@ -1,0 +1,21 @@
+:root {
+  --bg: #0a0a0a;
+  --surface: #161616;
+  --border: #2a2a2a;
+  --text: #ffffff;
+  --text-2: #a0a0a0;
+  --accent: #ffc400;
+  --accent-ink: #0a0a0a;
+  --hazard: repeating-linear-gradient(45deg, #ffc400 0 8px, #0a0a0a 8px 16px);
+  --focus-ring: 0 0 0 2px var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

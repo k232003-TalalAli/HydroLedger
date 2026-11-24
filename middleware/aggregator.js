@@ -302,7 +302,11 @@ function wireMqtt(client, config, state) {
       console.log("[MQTT] Subscribed to sensor/flow and actuation/valve");
     });
     // After a restart or a broker reconnect, say again that the valve must be closed.
-    if (state.locked) publish(client, "CLOSE_VALVE", reasonFromCause(state.closeCause));
+    if (state.locked) {
+      publish(client, "CLOSE_VALVE", reasonFromCause(state.closeCause));
+      zeroFlowSensors(config, state);
+      publishFlowZeros(config, state);
+    }
   });
 
   client.on("error", (err) => {
@@ -372,11 +376,21 @@ function onFlowMessage(config, state, payload) {
     return;
   }
 
+  const now = Date.now();
+
+  // Valve closed: no water through the sector. Keep a heartbeat so sensors stay fresh,
+  // but force readings to 0 even if the simulator keeps publishing non-zero flows.
+  if (state.locked) {
+    state.ema[nodeId] = 0;
+    state.sensors[nodeId] = { value: 0, timestamp: now };
+    if (nodeId === config.upstreamNodeId) state.lastUpstreamMs = now;
+    return;
+  }
+
   const previous = state.ema[nodeId];
   const cleaned = previous === undefined ? flowRate : ALPHA * flowRate + (1 - ALPHA) * previous;
   state.ema[nodeId] = cleaned;
 
-  const now = Date.now();
   state.sensors[nodeId] = { value: cleaned, timestamp: now };
 
   if (nodeId === config.upstreamNodeId) {
@@ -388,8 +402,7 @@ function onFlowMessage(config, state, payload) {
       if (dt < 0) dt = 0;
     }
     state.lastUpstreamMs = now;
-    // A closed valve passes no water, so nothing is counted while the sector is locked.
-    if (!state.locked) state.dailyVolumeUsed += (cleaned / 60) * dt;
+    state.dailyVolumeUsed += (cleaned / 60) * dt;
   }
 }
 
@@ -407,15 +420,17 @@ function evaluate(config, state, chain) {
     return;
   }
 
-  const upstream = state.sensors[config.upstreamNodeId].value;
-  const downstream = downstreamSum(config, state);
+  // While locked, physical flow is zero (simulator chatter is ignored in onFlowMessage).
+  if (state.locked) zeroFlowSensors(config, state);
+  const upstream = state.locked ? 0 : state.sensors[config.upstreamNodeId].value;
+  const downstream = state.locked ? 0 : downstreamSum(config, state);
   const deltaQ = upstream - downstream;
   console.log(
     `[TELEMETRY] Upstream=${upstream.toFixed(2)} | ` +
       `Total Downstream=${downstream.toFixed(2)} | ` +
       `DeltaQ=${deltaQ.toFixed(2)} | ` +
       `Volume Used=${state.dailyVolumeUsed.toFixed(2)} L` +
-      (state.locked ? " | VALVE CLOSED: recorded as 0 flow" : "")
+      (state.locked ? " | VALVE CLOSED: flow forced to 0" : "")
   );
 
   // Freshness. A stale sensor never closes the valve; the quota check still runs.
@@ -484,7 +499,11 @@ function triggerBreach(config, state, chain, reason, downstream, deltaQ) {
   // 1. The valve first. Nothing below may delay or undo this.
   publish(state.client, "CLOSE_VALVE", reason);
 
-  // 2. Then remember it, then (live mode) queue the chain write.
+  // 2. Stop the waterfall: zero local sensors and tell MQTT consumers (UI / sims) flow is 0.
+  zeroFlowSensors(config, state);
+  publishFlowZeros(config, state);
+
+  // 3. Then remember it, then (live mode) queue the chain write.
   try {
     saveState(config, state);
   } catch (err) {
@@ -907,6 +926,31 @@ function publish(client, command, reason) {
     }
     console.log(`[ACTUATION] Published ${command} reason=${reason}`);
   });
+}
+
+/** Force in-memory sensor/EMA readings to 0 after a confirmed shut. */
+function zeroFlowSensors(config, state) {
+  const now = Date.now();
+  for (const id of [config.upstreamNodeId, ...config.downstream]) {
+    state.ema[id] = 0;
+    state.sensors[id] = { value: 0, timestamp: now };
+  }
+}
+
+/**
+ * Publish 0 L/min for upstream + expected downstream so the dashboard / Node-RED
+ * consumers stop showing a live waterfall after CLOSE_VALVE.
+ */
+function publishFlowZeros(config, state) {
+  const client = state.client;
+  if (!client) return;
+  const nodes = [config.upstreamNodeId, ...config.downstream];
+  for (const nodeId of nodes) {
+    const message = JSON.stringify({ node_id: nodeId, flow_rate: 0 });
+    client.publish("sensor/flow", message, (err) => {
+      if (err) console.error(`[ACTUATION] Failed to publish zero flow for ${nodeId}:`, err.message);
+    });
+  }
 }
 
 function missingSensors(config, state) {

@@ -1,0 +1,13 @@
+{
+  "name": "@hydroledger/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"API scaffold — Phase 3\"",
+    "build": "echo \"API scaffold — Phase 3\"",
+    "typecheck": "echo \"API scaffold — Phase 3\"",
+    "lint": "echo \"API scaffold — Phase 3\"",
+    "test": "echo \"API scaffold — Phase 3\""
+  }
+}

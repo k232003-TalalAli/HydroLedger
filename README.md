@@ -1,3 +1,24 @@
+# HydroLedger
+
+| Folder | Role |
+| ------ | ---- |
+| `middleware/`, `broker/`, `blockchain/`, `hydro-contracts/`, `simulation/` | Backend (MQTT, aggregator, Besu, contracts) |
+| [`frontend/`](./frontend/) | React dashboard + MQTT↔WS bridge |
+
+### Frontend (quick)
+
+```powershell
+cd frontend
+pnpm install
+pnpm --filter @hydroledger/shared build
+pnpm --filter @hydroledger/bridge dev   # terminal 1 — live MQTT
+pnpm --filter @hydroledger/web dev      # terminal 2 — http://localhost:5173
+```
+
+Details: [frontend/README.md](./frontend/README.md). Backend setup for laptops B/C continues below.
+
+---
+
 # HydroLedger: Setting up Laptop B and Laptop C
 
 This guide takes a laptop that has **nothing installed** (no Mosquitto, no Hardhat, no `node_modules`, no wallet) to a running sector that writes to the shared blockchain, and shows you how to look at the data afterwards. Follow the steps in order.

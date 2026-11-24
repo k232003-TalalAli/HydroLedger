@@ -1,0 +1,11 @@
+{
+  "name": "@hydroledger/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "echo \"Contracts scaffold — Phase 2\"",
+    "typecheck": "echo \"Contracts scaffold — Phase 2\"",
+    "lint": "echo \"Contracts scaffold — Phase 2\"",
+    "test": "echo \"Contracts scaffold — Phase 2\""
+  }
+}

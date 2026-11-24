@@ -1,0 +1,108 @@
+HydroLedger Dashboard
+This page requires JavaScript to display.
+Loading HydroLedger Dashboard...
+Unpacking...
+// — is left alone too; the attribute is then the author's to drop.)
+    template = template.replace(/
+';
+    // Inject after
+[]
+"
+\n
+\n\n
+HYDROLEDGER
+Hardhat Testnet
+block 8,204
+Last sync 2s ago
+Role:
+Admin
+Connect Wallet 0x7a..e41
+01  Overview
+02  Live Flow
+03  Alerts
+04  Quotas
+05  Ledger / Verify
+06  Valves
+07  Reports
+08  Admin
+CRITICAL
+Leak suspected between Node N1 and Node N2. Detected in 2.1 s. Logged on-chain.
+Isolate segment
+Total inflow
+42.6
+L/min
+Total outflow
+38.1
+ΔQ loss
+4.5
+10.6% of inflow · threshold ε 1.0
+Active alerts
+1 critical · 2 warning
+Nodes online
+/6
+N3 last seen 38s ago
+Pipeline topology
+○ normal   ▲ warning   ◆ critical   × offline
+RESERVOIR
+N1
+N2
+N3
+LEAK ΔQ 4.5
+V1 · OPEN
+SECTOR A
+SECTOR B
+SECTOR C
+V1 · OPEN · auto · 11:52
+V2 · CLOSED · manual override · 09:15
+◆ LEAK SUSPECTED · N1 → N2
+ΔQ 4.5 > ε 1.0 · 12:41:07 · 2.1 s
+Logged on-chain tx 0x4b9e..a1
+Isolate
+Details
+▲ SECTOR C QUOTA 93%
+12:30:44 · Pending anchoring
+× NODE N3 SIGNAL DELAYED
+12:40:29 · last seen 38s ago
+Live flow · N1 vs N2
+1m
+15m
+1h
+24h
+50
+40
+30
+20
+threshold band ε
+12:41 anomaly
+Upstream N1
+Downstream N2
+Shaded gap = ΔQ
+Data integrity
+Batch #1482
+ANCHORED
+Merkle root
+0x9f3a7c...e81b04c21e
+Block
+8,204
+Next anchor in
+12:40
+Verify a batch
+Sector quotas
+Sector A
+7,200 / 10,000 L · 72%
+Sector B
+4,100 / 10,000 L · 41%
+▲ Sector C
+9,300 / 10,000 L · 93%
+Recent on-chain events
+View full audit log
+12:41  LeakDetected
+tx 0x4b9e..a1
+12:00  RootAnchored
+tx 0x7c02..f3
+11:52  ValveClosed
+tx 0x1d77..09
+11:00  RootAnchored
+tx 0x88ae..c4
+\nclass Component extends DCLogic {\nrenderVals() { return {}; }\n}\n
+\n\n\n
