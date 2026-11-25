@@ -2,9 +2,6 @@ import { useState } from 'react';
 import { SECTOR_IDS, type SectorId } from '@hydroledger/shared';
 import { Button, Modal } from '@/components/ui';
 import { verifySectorOnChain } from '@/lib/chain';
-import { useMockMode } from '@/data/hooks';
-import { useDashboard } from '@/data/hooks';
-import { formatLpm } from '@/lib/format';
 
 interface VerifyModalProps {
   open: boolean;
@@ -13,8 +10,6 @@ interface VerifyModalProps {
 }
 
 export function VerifyModal({ open, onClose, defaultSectorId = 'Sector_B' }: VerifyModalProps) {
-  const mock = useMockMode();
-  const { data } = useDashboard();
   const [sectorId, setSectorId] = useState<SectorId>(defaultSectorId);
   const [result, setResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -23,17 +18,8 @@ export function VerifyModal({ open, onClose, defaultSectorId = 'Sector_B' }: Ver
     setBusy(true);
     setResult(null);
     try {
-      if (mock) {
-        const s = data?.sectors.find((x) => x.id === sectorId);
-        setResult(
-          s
-            ? `✓ MOCK: ${sectorId} up=${formatLpm(s.upstreamFlowLpm)} ΔQ=${formatLpm(s.deltaQLpm)} valve=${s.isValveClosed ? 'CLOSED' : 'OPEN'} (simulated)`
-            : '◆ Sector not in mock snapshot',
-        );
-      } else {
-        const v = await verifySectorOnChain(sectorId);
-        setResult(v.message);
-      }
+      const v = await verifySectorOnChain(sectorId);
+      setResult(v.message);
     } catch (e) {
       setResult(`◆ ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -61,7 +47,7 @@ export function VerifyModal({ open, onClose, defaultSectorId = 'Sector_B' }: Ver
         <p className="text-xs text-text-2">
           Reads WaterQuotaRegistry.sectorRegistry via Besu RPC. This backend has no Merkle batches.
         </p>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex flex-wrap items-center gap-2 text-sm">
           Sector
           <select
             className="h-8 rounded-btn border border-border bg-bg px-2 font-mono text-xs"

@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  // Load frontend/.env (VITE_USE_MOCK, RPC, bridge, …)
+  // Load frontend/.env (RPC, bridge, local sector, …)
   envDir: path.resolve(__dirname, '../..'),
   plugins: [react()],
   resolve: {

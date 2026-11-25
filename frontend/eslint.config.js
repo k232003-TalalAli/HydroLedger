@@ -12,7 +12,6 @@ export default tseslint.config(
       '**/build/**',
       '**/coverage/**',
       '**/node_modules/**',
-      'design/mock.html',
       '**/artifacts/**',
       '**/cache/**',
       '**/typechain-types/**',

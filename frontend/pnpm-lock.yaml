@@ -53,8 +53,6 @@ importers:
         specifier: ^8.18.0
         version: 8.23.0
 
-  apps/simulator: {}
-
   apps/web:
     dependencies:
       '@fontsource/jetbrains-mono':

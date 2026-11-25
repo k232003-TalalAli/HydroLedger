@@ -106,7 +106,7 @@ export interface ChainConfigView {
 /** Operator/admin dashboard snapshot (backend-shaped). */
 export interface DashboardSnapshot {
   syncedAt: string;
-  mode: 'live' | 'mock';
+  mode: 'live';
   bridgeConnected: boolean;
   chainConnected: boolean;
   kpis: OverviewKpis;
@@ -117,6 +117,8 @@ export interface DashboardSnapshot {
   flowSeries: FlowSample[];
   chain: ChainConfigView;
   selectedSectorId: SectorId;
+  /** Local MQTT OPEN was sent but registry still shows closed (awaiting Laptop A owner-reset). */
+  awaitingOwnerReset: boolean;
 }
 
 /** Citizen-reduced DTO — no valve actuation / operator controls. */

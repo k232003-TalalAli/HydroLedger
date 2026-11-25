@@ -17,6 +17,8 @@ export function LiveFlowChart({
 }: LiveFlowChartProps) {
   const elRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<uPlot | null>(null);
+  const thresholdRef = useRef(leakThreshold);
+  thresholdRef.current = leakThreshold;
 
   useEffect(() => {
     if (!elRef.current) return;
@@ -31,7 +33,16 @@ export function LiveFlowChart({
         {
           width: elRef.current.clientWidth || 600,
           height: 220,
-          scales: { x: { time: true } },
+          scales: {
+            x: { time: true },
+            y: {
+              // Keep 0-based axis; pad max so leak / close does not thrash the scale.
+              range: (_u, _min, max) => {
+                const hi = Math.max(max, thresholdRef.current * 2, 10);
+                return [0, hi * 1.1];
+              },
+            },
+          },
           axes: [
             { stroke: '#A0A0A0', grid: { stroke: '#2A2A2A' }, ticks: { stroke: '#2A2A2A' } },
             { stroke: '#A0A0A0', grid: { stroke: '#2A2A2A' }, ticks: { stroke: '#2A2A2A' } },

@@ -1,8 +1,6 @@
-import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '@/components/shell/AppShell';
 import { RequireRole } from '@/components/shell/RequireRole';
-import { Skeleton } from '@/components/ui';
 import { OverviewPage } from '@/features/overview/OverviewPage';
 import { FlowPage } from '@/features/flow/FlowPage';
 import { AlertsPage } from '@/features/alerts/AlertsPage';
@@ -15,10 +13,6 @@ import { CitizenPage } from '@/features/public/CitizenPage';
 import type { AppRoute } from '@hydroledger/shared';
 import type { ReactNode } from 'react';
 
-const DesignSystemPage = lazy(() =>
-  import('@/features/design/DesignSystemPage').then((m) => ({ default: m.DesignSystemPage })),
-);
-
 function Guarded({ route, children }: { route: AppRoute; children: ReactNode }) {
   return <RequireRole route={route}>{children}</RequireRole>;
 }
@@ -28,14 +22,6 @@ export function AppRouter() {
     <BrowserRouter>
       <Routes>
         <Route path="/public" element={<CitizenPage />} />
-        <Route
-          path="/__design"
-          element={
-            <Suspense fallback={<Skeleton className="m-6 h-40" />}>
-              <DesignSystemPage />
-            </Suspense>
-          }
-        />
         <Route element={<AppShell />}>
           <Route index element={<OverviewPage />} />
           <Route

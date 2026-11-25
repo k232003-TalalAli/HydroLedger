@@ -1,10 +1,12 @@
-import type { Alert, SectorId } from '@hydroledger/shared';
+import type { Alert } from '@hydroledger/shared';
+import { hasPermission } from '@hydroledger/shared';
 import { useMemo, useState } from 'react';
 import { CriticalBanner } from '@/components/shell/CriticalBanner';
-import { Button, Modal, Skeleton, Chip } from '@/components/ui';
-import { useDashboard, useScenarioControls } from '@/data/hooks';
+import { Modal, Skeleton, Chip } from '@/components/ui';
+import { useDashboard, useDashboardActions } from '@/data/hooks';
 import { useSessionStore } from '@/store/session';
 import { formatRelativeTime } from '@/lib/format';
+import { localSectorId } from '@/lib/localSector';
 import { VerifyModal } from '@/features/ledger/VerifyModal';
 import { AlertsPanel } from './AlertsPanel';
 import { EventsFeed } from './EventsFeed';
@@ -17,16 +19,24 @@ import { TopologyMap } from './TopologyMap';
 export function OverviewPage() {
   const { data, isLoading } = useDashboard();
   const role = useSessionStore((s) => s.role);
-  const { acknowledgeAlert, closeValve, selectSector } = useScenarioControls();
+  const { openValve, selectSector } = useDashboardActions();
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [detail, setDetail] = useState<Alert | null>(null);
-  const [isolateAlert, setIsolateAlert] = useState<Alert | null>(null);
-  const [reason, setReason] = useState('');
+  const localId = localSectorId();
+  const canActuate = hasPermission(role, 'action:valve:isolate');
 
   const critical = useMemo(
     () => data?.alerts.find((a) => a.severity === 'critical' && a.status === 'active') ?? null,
     [data],
   );
+
+  const localSector = data?.sectors.find((s) => s.id === localId);
+  const localValveClosed = Boolean(localSector?.isValveClosed);
+  const showBannerOpen =
+    canActuate &&
+    localValveClosed &&
+    critical?.sectorId === localId &&
+    (critical.reason === 'ANOMALY_DETECTED' || critical.reason === 'QUOTA_EXCEEDED');
 
   if (isLoading || !data) {
     return (
@@ -45,15 +55,26 @@ export function OverviewPage() {
     <div className="space-y-4">
       <CriticalBanner
         alert={critical}
-        onAction={() => critical && setIsolateAlert(critical)}
+        onAction={showBannerOpen ? () => openValve(localId) : undefined}
+        actionLabel="Open valve"
       />
+
+      {data.awaitingOwnerReset ? (
+        <div
+          className="rounded-card border border-accent/40 bg-surface px-4 py-2 text-sm text-text"
+          role="status"
+        >
+          MQTT open sent for <span className="font-mono">{localId}</span>. Registry still shows
+          closed — awaiting on-chain owner reset (Laptop A).
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-baseline justify-between gap-4">
         <h1 className="font-sans text-sm font-medium uppercase tracking-label text-text">
           Overview
         </h1>
         <div className="flex flex-wrap items-center gap-2">
-          <Chip accent={data.mode === 'live'}>{data.mode.toUpperCase()}</Chip>
+          <Chip accent>LIVE</Chip>
           <p className="font-mono text-[11px] text-text-2">
             Last sync {formatRelativeTime(data.syncedAt)}
           </p>
@@ -73,8 +94,9 @@ export function OverviewPage() {
         <AlertsPanel
           alerts={data.alerts.filter((a) => a.status === 'active')}
           role={role}
-          onAcknowledge={acknowledgeAlert}
-          onIsolate={setIsolateAlert}
+          localSectorId={localId}
+          localValveClosed={localValveClosed}
+          onOpenValve={canActuate ? openValve : undefined}
           onDetails={setDetail}
         />
         <LiveFlowChart
@@ -111,49 +133,6 @@ export function OverviewPage() {
             {JSON.stringify(detail, null, 2)}
           </pre>
         ) : null}
-      </Modal>
-
-      <Modal
-        open={!!isolateAlert}
-        title="Close valve (MQTT)"
-        onClose={() => {
-          setIsolateAlert(null);
-          setReason('');
-        }}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setIsolateAlert(null)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={reason.trim().length < 3}
-              onClick={() => {
-                if (isolateAlert) {
-                  closeValve(isolateAlert.sectorId as SectorId);
-                  acknowledgeAlert(isolateAlert.id);
-                }
-                setIsolateAlert(null);
-                setReason('');
-              }}
-            >
-              Publish CLOSE_VALVE
-            </Button>
-          </>
-        }
-      >
-        <p className="mb-3 text-sm">
-          Publishes MQTT <code>actuation/valve</code> CLOSE_VALVE. On-chain reopen still needs owner{' '}
-          <code>reset-sector</code> when the registry shows closed.
-        </p>
-        <label className="block text-xs text-text-2">
-          Reason (required)
-          <textarea
-            className="mt-1 w-full rounded-btn border border-border bg-bg p-2 font-sans text-sm text-text"
-            rows={3}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-        </label>
       </Modal>
     </div>
   );

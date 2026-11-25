@@ -52,7 +52,7 @@ You also need the **full HydroLedger project** on your PC, including this `block
 
 1. Open File Explorer and go to:
 
-   `HydroLedger` → `blockchain` → `besu-setup`
+   `HydroLedger` → `backend` → `blockchain` → `besu-setup`
 2. If you see a file named `.env`, **delete it**.
    - (You will create a fresh one in Step 4 from the correct template for your laptop.)
 
@@ -68,7 +68,7 @@ If you do not see `.env`, that is fine — continue.
 4. Go to the `besu-setup` folder. Paste this (change the path if your folder is somewhere else), then press Enter:
 
 ```powershell
-cd C:\Users\YOUR_USERNAME\Desktop\fyp\HydroLedger\blockchain\besu-setup
+cd C:\Users\YOUR_USERNAME\Desktop\fyp\HydroLedger\backend\blockchain\besu-setup
 ```
 
 Replace `YOUR_USERNAME` with your Windows username (for Umer this is usually `umert`).
@@ -190,7 +190,7 @@ docker compose down
 ```
 
 You are now ready for the test meeting.  
-On meeting day: open Docker Desktop + Tailscale, go to `blockchain\besu-setup`, run `docker compose up -d`, then check with `node chain.js status` again from `blockchain\chain-client`.
+On meeting day: open Docker Desktop + Tailscale, go to `backend\blockchain\besu-setup`, run `docker compose up -d`, then check with `node chain.js status` again from `backend\blockchain\chain-client`.
 
 ---
 
@@ -199,7 +199,7 @@ On meeting day: open Docker Desktop + Tailscale, go to `blockchain\besu-setup`, 
 ```powershell
 # 1. Docker Desktop open, Tailscale connected
 # 2. Start node
-cd ...\HydroLedger\blockchain\besu-setup
+cd ...\HydroLedger\backend\blockchain\besu-setup
 docker compose up -d
 
 # 3. Check
@@ -220,7 +220,7 @@ docker compose down
 Your Besu container is not running or not ready yet.
 
 ```powershell
-cd ...\HydroLedger\blockchain\besu-setup
+cd ...\HydroLedger\backend\blockchain\besu-setup
 docker ps -a
 docker logs hydro-node3
 ```
@@ -239,7 +239,7 @@ Docker once created empty **folders** where **files** should be. Fix:
 3. Then wipe old Docker data and start again:
 
 ```powershell
-cd ...\HydroLedger\blockchain\besu-setup
+cd ...\HydroLedger\backend\blockchain\besu-setup
 docker compose down -v
 docker compose up -d
 ```

@@ -2,10 +2,20 @@
 
 | Folder | Role |
 | ------ | ---- |
-| `middleware/`, `broker/`, `blockchain/`, `hydro-contracts/`, `simulation/` | Backend (MQTT, aggregator, Besu, contracts) |
+| [`backend/`](./backend/) (`middleware/`, `broker/`, `blockchain/`, `hydro-contracts/`, `simulation/`) | Backend (MQTT, aggregator, Besu, contracts) |
 | [`frontend/`](./frontend/) | React dashboard + MQTT↔WS bridge |
 
-### Frontend (quick)
+### One-click local stack (Sector_C typical)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start-simulation.ps1
+```
+
+Starts Besu (`docker compose` in `backend\blockchain\besu-setup`), Mosquitto, Node-RED, aggregator, MQTT bridge, and the web dashboard → http://localhost:5173/
+
+Flags: `-SkipDocker`, `-SkipFrontend`, `-SkipNodeRed`.
+
+### Frontend only
 
 ```powershell
 cd frontend
@@ -16,6 +26,8 @@ pnpm --filter @hydroledger/web dev      # terminal 2 — http://localhost:5173
 ```
 
 Details: [frontend/README.md](./frontend/README.md). Backend setup for laptops B/C continues below.
+
+**Hosting note:** live data stays on localhost / Tailscale. Do not deploy Besu/MQTT to Render; a public demo URL later would be a tunnel in front of this local stack.
 
 ---
 
@@ -30,7 +42,7 @@ This guide takes a laptop that has **nothing installed** (no Mosquitto, no Hardh
 | Env file for the node                          | `envs\B.env`                                 | `envs\C.env`                                 |
 | Local RPC                                      | `http://127.0.0.1:8545`                      | `http://127.0.0.1:8545`                      |
 | Reporter address (already registered on-chain) | `0xD5dED0965DC92CA48ff2B373Dd374da1f3f61B49` | `0xe03f702123677fFb9030724447fb9B9da6b157FE` |
-| Node-RED flow to import                        | `simulation\flows.json`                      | `simulation\flows.sector-c.json`             |
+| Node-RED flow to import                        | `backend\simulation\flows.json`                      | `backend\simulation\flows.sector-c.json`             |
 
 Laptop A (the host and contract owner) must have its two Besu containers running **before** B and C start.
 
@@ -64,7 +76,7 @@ These are your private keys for accessing the chain, store a copy safely, losing
 
 ### 1c. The contract addresses
 
-They are in `hydro-contracts\deployments\besu.json`. At the time of writing:
+They are in `backend\hydro-contracts\deployments\besu.json`. At the time of writing:
 
 ```text
 CONTRACT_ADDRESS            = 0xADc48A06940CB4F9066d66891170BE573b47453B
@@ -114,13 +126,13 @@ The commands below assume that path of your local repository. Change it if yours
 ```powershell
 $P = "C:\Hydroledger"
 
-cd $P\blockchain\chain-client
+cd $P\backend\blockchain\chain-client
 npm install
 
-cd $P\middleware
+cd $P\backend\middleware
 npm install
 
-cd $P\hydro-contracts
+cd $P\backend\hydro-contracts
 npm install --omit=dev
 ```
 
@@ -151,14 +163,14 @@ The project copy may contain Laptop A's `.env` inside `besu-setup`. Replace it w
 **Laptop B:**
 
 ```powershell
-cd $P\blockchain\besu-setup
+cd $P\backend\blockchain\besu-setup
 Copy-Item envs\B.env .env -Force
 ```
 
 **Laptop C:**
 
 ```powershell
-cd $P\blockchain\besu-setup
+cd $P\backend\blockchain\besu-setup
 Copy-Item envs\C.env .env -Force
 ```
 
@@ -178,13 +190,13 @@ docker ps
 ### 4d. Check that you caught up
 
 ```powershell
-cd $P\blockchain\chain-client
+cd $P\backend\blockchain\chain-client
 node chain.js status
 ```
 
 You should see `peers` of at least 1 and 4 `validators`. Run it again every 10 to 20 seconds. The `block` number goes up while your node downloads the missing blocks, then it matches Laptop A's. Ask the person on Laptop A to run the same command and compare the `block` numbers. **Do not go on until they match.**
 
-> If your Tailscale IP changed since the env files were made, peers stay at 0. Ask Laptop A to run `node set-ips.js <IP_A> <IP_B> <IP_C>` in the `blockchain` folder, redo step 4b, then `docker compose down` and `docker compose up -d`.
+> If your Tailscale IP changed since the env files were made, peers stay at 0. Ask Laptop A to run `node set-ips.js <IP_A> <IP_B> <IP_C>` in the `backend\blockchain` folder, redo step 4b, then `docker compose down` and `docker compose up -d`.
 
 ---
 
@@ -192,7 +204,7 @@ You should see `peers` of at least 1 and 4 `validators`. Run it again every 10 t
 
 ### 5a. The aggregator settings: `middleware\.env`
 
-Create the file `$P\middleware\.env` (for example with `notepad $P\middleware\.env`) and paste the block for your laptop. Replace `PASTE_YOUR_KEY_HERE` with the reporter key you received.
+Create the file `$P\backend\middleware\.env` (for example with `notepad $P\backend\middleware\.env`) and paste the block for your laptop. Replace `PASTE_YOUR_KEY_HERE` with the reporter key you received.
 
 **Laptop B:**
 
@@ -227,7 +239,7 @@ EXPECTED_DOWNSTREAM=Sector_C
 
 Laptops B and C both use `RPC_URL=http://127.0.0.1:8545`. Only Laptop A uses 8546. If you want a safe first run that makes no chain calls, set `DRY_RUN=true`, test, then change it to `false`.
 
-Also, on laptop B and C, open broker/mosquitto.config, find this section:
+Also, on laptop B and C, open backend/broker/mosquitto.config, find this section:
 
 # --- Active listener: this laptop only -------------------------------------------------
 listener 1883 127.0.0.1
@@ -242,7 +254,7 @@ and replace "listener 1883 127.0.0.1" with "listener 1883 0.0.0.0".
 
 ### 5b. Settings for the read scripts: `hydro-contracts\.env`
 
-Create `$P\hydro-contracts\.env` with just this line:
+Create `$P\backend\hydro-contracts\.env` with just this line:
 
 ```env
 RPC_URL=http://127.0.0.1:8545
@@ -271,10 +283,10 @@ Stop-Service mosquitto -ErrorAction SilentlyContinue
 Set-Service mosquitto -StartupType Manual
 ```
 
-Quick test, from `$P\broker`:
+Quick test, from `$P\backend\broker`:
 
 ```powershell
-cd $P\broker
+cd $P\backend\broker
 & "C:\Program Files\mosquitto\mosquitto.exe" -c mosquitto.conf -v
 ```
 
@@ -288,8 +300,8 @@ node-red
 
 Open http://127.0.0.1:1880, then: menu (three lines, top right), **Import**, **select a file to import**, choose:
 
-* Laptop B: `$P\simulation\flows.json`
-* Laptop C: `$P\simulation\flows.sector-c.json`
+* Laptop B: `$P\backend\simulation\flows.json`
+* Laptop C: `$P\backend\simulation\flows.sector-c.json`
 
 Click **Import**, then **Deploy**. Press Ctrl+C in PowerShell to stop Node-RED. It remembers the flow.
 
@@ -303,14 +315,14 @@ Order matters: **Laptop A's nodes first**, then your node (step 4c, already runn
 
 ```powershell
 # Window 1
-cd $P\broker
+cd $P\backend\broker
 & "C:\Program Files\mosquitto\mosquitto.exe" -c mosquitto.conf -v
 
 # Window 2
 node-red
 
 # Window 3
-cd $P\middleware
+cd $P\backend\middleware
 node aggregator.js
 ```
 
@@ -351,14 +363,14 @@ On Laptop C write `"Sector_C"` in the message instead. Expected: `CLOSE_VALVE`, 
 
 ### 8c. View the data
 
-Run these in `$P\hydro-contracts`. They only read, so no key is needed, and **every laptop sees all three sectors** because the chain is shared:
+Run these in `$P\backend\hydro-contracts`. They only read, so no key is needed, and **every laptop sees all three sectors** because the chain is shared:
 
 ```powershell
-cd $P\hydro-contracts
+cd $P\backend\hydro-contracts
 foreach ($s in "Sector_A","Sector_B","Sector_C") { node scripts/admin/read-history.js $s } #pretty format
 ```
 ```powershell
-cd $P\hydro-contracts
+cd $P\backend\hydro-contracts
 foreach ($s in "Sector_A","Sector_B","Sector_C") { node scripts/admin/read-sector.js $s } #Raw Blockchain state and event list
 ```
 
@@ -394,7 +406,7 @@ Within about 30 seconds your aggregator logs `[CHAIN] Owner reset observed` and 
 
 ```powershell
 # 1. Docker Desktop open, Tailscale Connected, Laptop A's nodes running
-cd $P\blockchain\besu-setup
+cd $P\backend\blockchain\besu-setup
 docker compose up -d
 
 # 2. Check you are in sync (block matches Laptop A)
@@ -424,6 +436,6 @@ If the laptop was off for a while, just do step 1. The node catches up on its ow
 | `Cannot create the reporter wallet` | `PRIVATE_KEY` is empty or has extra spaces or quotes. |
 | `[CHAIN] Rollover not finished ... chain clock not at the new day yet` and it keeps repeating | Run `w32tm /resync` as Administrator on every laptop, then restart the aggregator. |
 | `[WARMUP] waiting for: Upstream_Master,Sector_B` forever | Node-RED is not running or the flow is not deployed. Open http://127.0.0.1:1880 and click **Deploy**. |
-| `read-history.js` says `Missing ...besu.json` | Copy `hydro-contracts\deployments\besu.json` from Laptop A, or add `CONTRACT_ADDRESS` and `TELEMETRY_CONTRACT_ADDRESS` to `hydro-contracts\.env`. |
+| `read-history.js` says `Missing ...besu.json` | Copy `backend\hydro-contracts\deployments\besu.json` from Laptop A, or add `CONTRACT_ADDRESS` and `TELEMETRY_CONTRACT_ADDRESS` to `hydro-contracts\.env`. |
 | `npm.ps1 cannot be loaded` | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 | Docker error about `genesis.json (Is a directory)` | A mounted path became a folder. Make sure `besu-net\genesis.json`, `besu-net\node3\key` (or `node4`) and `besu-net\static\static-nodes-3.json` (or `-4`) are real **files**. Delete any same-named folders, copy the real files from Laptop A, then `docker compose down -v` and `docker compose up -d`. This is the only case where `-v` is OK, and the node will re-download the chain. |

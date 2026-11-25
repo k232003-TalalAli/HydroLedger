@@ -9,7 +9,7 @@ interface CriticalBannerProps {
 export function CriticalBanner({
   alert,
   onAction,
-  actionLabel = 'Isolate segment',
+  actionLabel = 'Open valve',
 }: CriticalBannerProps) {
   if (!alert || alert.status !== 'active' || alert.severity !== 'critical') return null;
 
@@ -22,7 +22,7 @@ export function CriticalBanner({
       <span className="font-sans text-[11px] font-bold uppercase tracking-label">Critical</span>
       <p className="flex-1 text-sm">
         {alert.reason === 'ANOMALY_DETECTED'
-          ? `Leak anomaly (${alert.sectorId}). ${alert.txHash ? 'Logged on-chain.' : 'Pending / local.'}`
+          ? `Leak anomaly (${alert.sectorId}). ${alert.txHash ? 'Logged on-chain.' : 'Pending on-chain.'}`
           : alert.title}
       </p>
       {onAction ? (

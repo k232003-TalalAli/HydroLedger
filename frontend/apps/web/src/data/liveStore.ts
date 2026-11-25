@@ -22,12 +22,26 @@ interface LiveState {
   selectedSectorId: SectorId;
   sectors: SectorStateView[];
   flowSeries: FlowSample[];
+  /** EMA values for the chart only (raw MQTT still drives KPIs). */
+  chartUpstream: number;
+  chartDownstream: number;
   mqttUpstream: number | null;
   lastChain: Awaited<ReturnType<typeof readChainState>> | null;
   listeners: Set<Listener>;
   pollTimer: ReturnType<typeof setInterval> | null;
+  sampleTimer: ReturnType<typeof setInterval> | null;
+  pollInFlight: boolean;
+  /** Set after MQTT OPEN until chain shows valve open (hint only; status is chain). */
+  mqttOpenPending: boolean;
   unsubBridge: (() => void) | null;
 }
+
+/** Chart sample rate — avoids sawtooth when Node-RED + leak script both publish. */
+const CHART_SAMPLE_MS = 1000;
+const CHART_EMA_ALPHA = 0.4;
+const CHART_MAX_POINTS = 120;
+/** How often the UI re-reads Besu (remote sectors have no local MQTT). */
+const CHAIN_POLL_MS = 1000;
 
 const state: LiveState = {
   bridgeConnected: false,
@@ -48,12 +62,44 @@ const state: LiveState = {
     lastSeenAt: null,
   })),
   flowSeries: [],
+  chartUpstream: 0,
+  chartDownstream: 0,
   mqttUpstream: null,
   lastChain: null,
   listeners: new Set(),
   pollTimer: null,
+  sampleTimer: null,
+  pollInFlight: false,
+  mqttOpenPending: false,
   unsubBridge: null,
 };
+
+function pushChartSample(upstream: number, downstream: number, sectorId: SectorId): void {
+  state.flowSeries.push({
+    ts: Date.now(),
+    upstream,
+    downstream,
+    sectorId,
+  });
+  if (state.flowSeries.length > CHART_MAX_POINTS) state.flowSeries.shift();
+}
+
+function sampleChart(): void {
+  const local = state.sectors.find((x) => x.id === localSectorId());
+  if (!local) return;
+  if (local.isValveClosed) {
+    state.chartUpstream = 0;
+    state.chartDownstream = 0;
+    pushChartSample(0, 0, local.id);
+    emit();
+    return;
+  }
+  const a = CHART_EMA_ALPHA;
+  state.chartUpstream = a * local.upstreamFlowLpm + (1 - a) * state.chartUpstream;
+  state.chartDownstream = a * local.downstreamFlowLpm + (1 - a) * state.chartDownstream;
+  pushChartSample(state.chartUpstream, state.chartDownstream, local.id);
+  emit();
+}
 
 function emit(): void {
   for (const fn of state.listeners) fn();
@@ -74,6 +120,9 @@ function mergeChain(): void {
     local.isValveClosed = cs.isValveClosed;
     local.closeCause = cs.closeCause;
     local.lastUpdated = cs.lastUpdated;
+    if (local.id === localSectorId() && state.mqttOpenPending && !cs.isValveClosed) {
+      state.mqttOpenPending = false;
+    }
     // Closed valve → no waterfall (display 0 even if MQTT/sim still chatters)
     if (local.isValveClosed) {
       local.upstreamFlowLpm = 0;
@@ -145,47 +194,27 @@ export function startLiveStore(): () => void {
             if (state.mqttUpstream != null) local.upstreamFlowLpm = state.mqttUpstream;
             local.deltaQLpm = Math.max(0, local.upstreamFlowLpm - local.downstreamFlowLpm);
           }
-          state.flowSeries.push({
-            ts: Date.now(),
-            upstream: local.upstreamFlowLpm,
-            downstream: local.downstreamFlowLpm,
-            sectorId: local.id,
-          });
-          if (state.flowSeries.length > 120) state.flowSeries.shift();
+          // Chart samples on a timer (see sampleChart) so bursty MQTT does not sawtooth.
         }
         emit();
       }
       if (msg.type === 'mqtt' && msg.topic === MQTT_TOPIC_ACTUATION_VALVE) {
-        const p = msg.payload as { command?: string; reason?: string };
-        // MQTT valve cmds are local to this laptop's broker → apply to local sector
-        const local = state.sectors.find((x) => x.id === localSectorId());
-        if (p.command === 'CLOSE_VALVE' && local) {
-          local.isValveClosed = true;
-          local.closeCause = p.reason === 'QUOTA_EXCEEDED' ? 2 : 1;
-          local.upstreamFlowLpm = 0;
-          local.downstreamFlowLpm = 0;
-          local.deltaQLpm = 0;
-          state.selectedSectorId = local.id;
-          state.flowSeries.push({
-            ts: Date.now(),
-            upstream: 0,
-            downstream: 0,
-            sectorId: local.id,
-          });
-          if (state.flowSeries.length > 120) state.flowSeries.shift();
+        const p = msg.payload as { command?: string };
+        // Valve open/closed UI state comes from chain only. MQTT OPEN is a request hint.
+        if (p.command === 'OPEN_VALVE') {
+          state.mqttOpenPending = true;
+          emit();
+        } else if (p.command === 'CLOSE_VALVE') {
+          state.mqttOpenPending = false;
+          emit();
         }
-        if (p.command === 'OPEN_VALVE' && local) {
-          local.isValveClosed = false;
-          local.closeCause = 0;
-          if (state.mqttUpstream != null) local.upstreamFlowLpm = state.mqttUpstream;
-          local.deltaQLpm = Math.max(0, local.upstreamFlowLpm - local.downstreamFlowLpm);
-        }
-        emit();
       }
     });
   }
 
   const poll = async () => {
+    if (state.pollInFlight) return;
+    state.pollInFlight = true;
     try {
       state.lastChain = await readChainState();
       mergeChain();
@@ -193,11 +222,16 @@ export function startLiveStore(): () => void {
     } catch (err) {
       console.error('[liveStore] chain poll failed', err);
       emit();
+    } finally {
+      state.pollInFlight = false;
     }
   };
   void poll();
   if (!state.pollTimer) {
-    state.pollTimer = setInterval(() => void poll(), 4000);
+    state.pollTimer = setInterval(() => void poll(), CHAIN_POLL_MS);
+  }
+  if (!state.sampleTimer) {
+    state.sampleTimer = setInterval(() => sampleChart(), CHART_SAMPLE_MS);
   }
 
   return () => {
@@ -217,26 +251,13 @@ export function setLiveSelectedSector(id: SectorId): void {
   emit();
 }
 
-export function liveCloseValve(sectorId: SectorId): void {
-  state.selectedSectorId = sectorId;
-  publishValve({ command: 'CLOSE_VALVE', reason: 'ANOMALY_DETECTED' });
-  const s = state.sectors.find((x) => x.id === sectorId);
-  if (s) {
-    s.isValveClosed = true;
-    s.closeCause = 1;
-    emit();
-  }
-}
-
+/** Publish MQTT OPEN_VALVE (aggregator re-arm). UI valve state still follows chain. */
 export function liveOpenValve(sectorId: SectorId): void {
+  if (sectorId !== localSectorId()) return;
   state.selectedSectorId = sectorId;
+  state.mqttOpenPending = true;
   publishValve({ command: 'OPEN_VALVE' });
-  const s = state.sectors.find((x) => x.id === sectorId);
-  if (s) {
-    s.isValveClosed = false;
-    s.closeCause = 0;
-    emit();
-  }
+  emit();
 }
 
 export function getLiveSnapshot(): DashboardSnapshot {
@@ -244,6 +265,9 @@ export function getLiveSnapshot(): DashboardSnapshot {
   const sectors = state.sectors;
   const alerts = chain?.alerts ?? [];
   const active = alerts.filter((a) => a.status === 'active');
+  const local = sectors.find((s) => s.id === localSectorId());
+  const chainLocalClosed =
+    chain?.sectors.find((s) => s.id === localSectorId())?.isValveClosed ?? local?.isValveClosed ?? false;
   const up =
     sectors.reduce((n, s) => n + s.upstreamFlowLpm, 0) / Math.max(1, sectors.length);
   return {
@@ -251,6 +275,7 @@ export function getLiveSnapshot(): DashboardSnapshot {
     mode: 'live',
     bridgeConnected: state.bridgeConnected,
     chainConnected: state.chainConnected,
+    awaitingOwnerReset: state.mqttOpenPending && chainLocalClosed,
     kpis: {
       totalUpstreamLpm: up,
       totalDownstreamLpm: sectors.reduce((n, s) => n + s.downstreamFlowLpm, 0),

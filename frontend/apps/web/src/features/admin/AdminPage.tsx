@@ -1,12 +1,9 @@
 import { Card, Chip, Skeleton } from '@/components/ui';
-import { Button } from '@/components/ui';
-import { useDashboard, useMockMode, useScenarioControls, SCENARIOS, type Scenario } from '@/data/hooks';
+import { useDashboard } from '@/data/hooks';
 import { truncateHash } from '@/lib/format';
 
 export function AdminPage() {
   const { data, isLoading } = useDashboard();
-  const mock = useMockMode();
-  const { setScenario, scenario } = useScenarioControls();
 
   if (isLoading || !data) return <Skeleton className="h-64" />;
 
@@ -28,30 +25,12 @@ export function AdminPage() {
           {data.chainConnected ? 'RPC connected' : 'RPC unreachable'}
         </Chip>
       </Card>
-      {mock ? (
-        <Card className="space-y-3">
-          <h2 className="label-caps">Mock scenario</h2>
-          <div className="flex flex-wrap gap-2">
-            {SCENARIOS.map((s) => (
-              <Button
-                key={s}
-                size="sm"
-                variant={scenario === s ? 'primary' : 'outline'}
-                onClick={() => setScenario(s as Scenario)}
-              >
-                {s}
-              </Button>
-            ))}
-          </div>
-        </Card>
-      ) : (
-        <Card>
-          <p className="text-sm text-text-2">
-            Live mode: drive scenarios from Node-RED (<code>simulation/flows*.json</code>) and the
-            aggregator. Set <code>VITE_USE_MOCK=true</code> for offline UI demos.
-          </p>
-        </Card>
-      )}
+      <Card>
+        <p className="text-sm text-text-2">
+          Drive scenarios from Node-RED (<code>backend/simulation/flows*.json</code>) and the
+          aggregator — this dashboard is live-only (Besu + MQTT via bridge).
+        </p>
+      </Card>
     </div>
   );
 }

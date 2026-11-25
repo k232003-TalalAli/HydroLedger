@@ -3,7 +3,6 @@ dist
 build
 coverage
 pnpm-lock.yaml
-design/mock.html
 artifacts
 cache
 typechain-types

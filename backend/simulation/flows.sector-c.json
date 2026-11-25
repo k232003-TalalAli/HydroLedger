@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "HydroLedger Grid Simulation",
     "disabled": false,
-    "info": "Simulates Upstream_Master and Sector_B flow telemetry over MQTT, with live leak, corrupt-spike, and OPEN_VALVE reset inject buttons for demo.",
+    "info": "Simulates Upstream_Master and Sector_C flow telemetry over MQTT, with live leak, corrupt-spike, and OPEN_VALVE reset inject buttons for demo.",
     "env": []
   },
   {
@@ -67,7 +67,7 @@
     "id": "a1b2c3d4e5f60302",
     "type": "inject",
     "z": "a1b2c3d4e5f60101",
-    "name": "Sector_B Normal (20.0 L/min)",
+    "name": "Sector_C Normal (20.0 L/min)",
     "props": [
       {
         "p": "payload"
@@ -78,7 +78,7 @@
     "once": false,
     "onceDelay": 0.1,
     "topic": "",
-    "payload": "{\"node_id\":\"Sector_B\",\"flow_rate\":20.0}",
+    "payload": "{\"node_id\":\"Sector_C\",\"flow_rate\":20.0}",
     "payloadType": "str",
     "x": 220,
     "y": 160,
@@ -92,7 +92,7 @@
     "id": "a1b2c3d4e5f60303",
     "type": "inject",
     "z": "a1b2c3d4e5f60101",
-    "name": "INJECT PIPE BURST (Sector_B = 2.0 L/min)",
+    "name": "INJECT PIPE BURST (Sector_C = 2.0 L/min)",
     "props": [
       {
         "p": "payload"
@@ -103,7 +103,7 @@
     "once": false,
     "onceDelay": 0.1,
     "topic": "",
-    "payload": "{\"node_id\":\"Sector_B\",\"flow_rate\":2.0}",
+    "payload": "{\"node_id\":\"Sector_C\",\"flow_rate\":2.0}",
     "payloadType": "str",
     "x": 260,
     "y": 260,

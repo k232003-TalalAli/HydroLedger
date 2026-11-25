@@ -2,17 +2,18 @@ import { useState } from 'react';
 import { closeCauseLabel, type SectorId } from '@hydroledger/shared';
 import { hasPermission } from '@hydroledger/shared';
 import { Button, Card, Chip, Modal, Skeleton } from '@/components/ui';
-import { useDashboard, useScenarioControls } from '@/data/hooks';
+import { useDashboard, useDashboardActions } from '@/data/hooks';
 import { useSessionStore } from '@/store/session';
 import { formatRelativeTime } from '@/lib/format';
+import { localSectorId } from '@/lib/localSector';
 
 export function ValvesPage() {
   const { data, isLoading } = useDashboard();
   const role = useSessionStore((s) => s.role);
-  const { closeValve, openValve } = useScenarioControls();
-  const [pending, setPending] = useState<{ id: SectorId; action: 'open' | 'close' } | null>(null);
-  const [reason, setReason] = useState('');
-  const canIsolate = hasPermission(role, 'action:valve:isolate');
+  const { openValve } = useDashboardActions();
+  const [pending, setPending] = useState<SectorId | null>(null);
+  const canActuate = hasPermission(role, 'action:valve:isolate');
+  const localId = localSectorId();
 
   if (isLoading || !data) return <Skeleton className="h-64" />;
 
@@ -20,63 +21,61 @@ export function ValvesPage() {
     <div className="space-y-4">
       <h1 className="font-sans text-sm font-medium uppercase tracking-label">Valves</h1>
       <p className="text-sm text-text-2">
-        Close publishes MQTT <code>CLOSE_VALVE</code>. If the chain still shows closed after Open,
-        an owner must run <code>reset-sector.js</code> on Laptop A.
+        Valve open/closed status is always from the chain. For this laptop&apos;s sector (
+        <span className="font-mono">{localId}</span>), Open publishes MQTT{' '}
+        <code>OPEN_VALVE</code> to re-arm the aggregator; on-chain reopen still needs Laptop A
+        owner-reset / <code>reset-sector</code>. Other sectors are read-only.
       </p>
+      {data.awaitingOwnerReset ? (
+        <p className="text-sm text-accent" role="status">
+          Awaiting on-chain owner reset for <span className="font-mono">{localId}</span>.
+        </p>
+      ) : null}
       <div className="grid gap-3 md:grid-cols-3">
-        {data.sectors.map((s) => (
-          <Card key={s.id} className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="font-mono text-lg">{s.id}</p>
-              <Chip accent={s.isValveClosed}>{s.isValveClosed ? 'CLOSED' : 'OPEN'}</Chip>
-            </div>
-            <p className="text-xs text-text-2">
-              Cause {closeCauseLabel(s.closeCause)}
-              {s.lastUpdated ? ` · ${formatRelativeTime(s.lastUpdated)}` : ''}
-            </p>
-            {canIsolate ? (
-              <div className="flex gap-2">
+        {data.sectors.map((s) => {
+          const isLocal = s.id === localId;
+          return (
+            <Card key={s.id} className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-lg">{s.id}</p>
+                <Chip accent={s.isValveClosed}>{s.isValveClosed ? 'CLOSED' : 'OPEN'}</Chip>
+              </div>
+              <p className="text-xs text-text-2">
+                {isLocal ? 'Local sector (chain status)' : 'Remote (chain only)'} · Cause{' '}
+                {closeCauseLabel(s.closeCause)}
+                {s.lastUpdated ? ` · ${formatRelativeTime(s.lastUpdated)}` : ''}
+              </p>
+              {canActuate && isLocal ? (
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={!s.isValveClosed}
-                  onClick={() => setPending({ id: s.id, action: 'open' })}
+                  onClick={() => setPending(s.id)}
                 >
                   Open (MQTT)
                 </Button>
-                <Button
-                  size="sm"
-                  disabled={s.isValveClosed}
-                  onClick={() => setPending({ id: s.id, action: 'close' })}
-                >
-                  Close / Isolate
-                </Button>
-              </div>
-            ) : null}
-          </Card>
-        ))}
+              ) : canActuate && !isLocal ? (
+                <p className="text-xs text-text-2">Actuation from this UI is local-sector only.</p>
+              ) : null}
+            </Card>
+          );
+        })}
       </div>
 
       <Modal
         open={!!pending}
-        title={pending?.action === 'close' ? 'Close valve' : 'Open valve'}
-        onClose={() => {
-          setPending(null);
-          setReason('');
-        }}
+        title="Open valve"
+        onClose={() => setPending(null)}
         footer={
           <>
             <Button variant="ghost" onClick={() => setPending(null)}>
               Cancel
             </Button>
             <Button
-              disabled={pending?.action === 'close' && reason.trim().length < 3}
               onClick={() => {
                 if (!pending) return;
-                if (pending.action === 'close') closeValve(pending.id);
-                else openValve(pending.id);
+                openValve(pending);
                 setPending(null);
-                setReason('');
               }}
             >
               Confirm
@@ -84,19 +83,11 @@ export function ValvesPage() {
           </>
         }
       >
-        {pending?.action === 'close' ? (
-          <textarea
-            className="w-full rounded-btn border border-border bg-bg p-2 text-sm"
-            rows={3}
-            placeholder="Reason required"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-        ) : (
-          <p className="text-sm text-text-2">
-            MQTT OPEN_VALVE clears local lock only; chain may still require owner reset.
-          </p>
-        )}
+        <p className="text-sm text-text-2">
+          Publishes MQTT <code>OPEN_VALVE</code> (same as Node-RED). Clears the local aggregator
+          lock; on-chain reopen still needs Laptop A owner-reset if the registry shows closed. UI
+          status updates only when the chain changes.
+        </p>
       </Modal>
     </div>
   );

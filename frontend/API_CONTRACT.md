@@ -1,6 +1,6 @@
 # HydroLedger integration contract (backend = source of truth)
 
-The dashboard does **not** call a REST API. The backend publishes MQTT and writes Besu contracts. The frontend reads those channels.
+The dashboard does **not** call a REST API. The backend publishes MQTT and writes Besu contracts. The frontend reads those channels (live only).
 
 ## Channels
 
@@ -30,11 +30,11 @@ Reasons: `ANOMALY_DETECTED`, `QUOTA_EXCEEDED`, `OWNER_RESET`, `DAILY_ROLLOVER`.
 - Alert reasons: `ANOMALY_DETECTED`, `QUOTA_EXCEEDED`
 - **No Merkle roots** in this backend
 
-## Frontend modes
+## Frontend data path
 
-- `VITE_USE_MOCK=true` — offline sector simulator
-- `VITE_USE_MOCK=false` — ethers poll + MQTT via `apps/bridge`
+- ethers poll of Besu + MQTT via `apps/bridge` → `liveStore` → TanStack Query
+- No in-browser mock / offline simulator
 
 ## Backend repo
 
-Treat `../backend/` as **read-only**. Do not patch aggregator/contracts from the frontend track.
+Treat `../backend/` as **read-only** unless a change is explicitly agreed (e.g. aggregator zero-flow patch).
