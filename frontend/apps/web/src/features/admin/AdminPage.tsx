@@ -27,7 +27,7 @@ export function AdminPage() {
       </Card>
       <Card>
         <p className="text-sm text-text-2">
-          Drive scenarios from Node-RED (<code>backend/simulation/flows*.json</code>) and the
+          Drive scenarios from Node-RED (<code>simulation/flows*.json</code>) and the
           aggregator — this dashboard is live-only (Besu + MQTT via bridge).
         </p>
       </Card>

@@ -37,4 +37,4 @@ Reasons: `ANOMALY_DETECTED`, `QUOTA_EXCEEDED`, `OWNER_RESET`, `DAILY_ROLLOVER`.
 
 ## Backend repo
 
-Treat `../backend/` as **read-only** unless a change is explicitly agreed (e.g. aggregator zero-flow patch).
+Treat repo-root backend packages (`middleware/`, `blockchain/`, etc.) as **read-only** unless a change is explicitly agreed (e.g. aggregator zero-flow patch).

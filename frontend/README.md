@@ -1,31 +1,27 @@
-# HydroLedger (Frontend)
+# HydroLedger Frontend
 
-React dashboard aligned to the **backend** MQTT + Besu stack (`Sector_A/B/C`, no REST API).
+React dashboard for the MQTT + Besu stack (`Sector_A` / `B` / `C`).
 
-**Do not modify** `../backend/` — it is a read-only copy of the teammates’ repo.
+Backend setup (Besu, Mosquitto, Node-RED, aggregator) is in the **repo root** [`README.md`](../README.md). Start that first.
 
-Run all commands from this `frontend/` directory.
+## Start the dashboard
 
-## Quick start
-
-**Preferred:** from repo root, one script starts Besu + Mosquitto + Node-RED + aggregator + bridge + web:
+From this `frontend/` folder:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File ..\start-simulation.ps1
-```
-
-**Frontend only** (backend already running):
-
-```bash
 pnpm install
-cp .env.example .env
-# set VITE_LOCAL_SECTOR_ID=Sector_X and correct VITE_RPC_URL / contract addresses
-pnpm --filter @hydroledger/shared build
+copy .env.example .env
 ```
 
-Then start bridge + web:
+Edit `.env` for your laptop:
 
-```bash
+- `VITE_LOCAL_SECTOR_ID` — `Sector_A`, `Sector_B`, or `Sector_C`
+- `VITE_RPC_URL` / contract addresses — match your local Besu deploy
+
+Then:
+
+```powershell
+pnpm --filter @hydroledger/shared build
 pnpm --filter @hydroledger/bridge dev
 pnpm --filter @hydroledger/web dev
 ```
@@ -33,24 +29,15 @@ pnpm --filter @hydroledger/web dev
 Open http://localhost:5173
 
 - Bridge: `ws://127.0.0.1:8787` ↔ MQTT `1883`
-- Web reads Besu via ethers (free reads on private chain)
-
-## Scripts
-
-| Command | Purpose |
-| ------- | ------- |
-| `pnpm dev` | Web only |
-| `pnpm --filter @hydroledger/bridge dev` | MQTT↔WS bridge |
-| `pnpm lint` / `typecheck` / `test` / `build` | Quality |
+- Web reads Besu via ethers (private chain)
 
 ## Layout
 
 ```
 frontend/
   apps/web         Dashboard (React)
-  apps/bridge      MQTT ↔ WebSocket (ours)
-  packages/shared  Sector types + scale helpers
-../backend/        Teammates’ stack — read-only
+  apps/bridge      MQTT ↔ WebSocket
+  packages/shared  Sector types + helpers
 ```
 
 See [API_CONTRACT.md](./API_CONTRACT.md).

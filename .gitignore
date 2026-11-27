@@ -4,7 +4,7 @@ node_modules/
 # secrets: never commit
 .env
 wallets.local.json
-backend/blockchain/besu-net/node*/key
+blockchain/besu-net/node*/key
 
 # local / generated
 state/
@@ -13,6 +13,7 @@ cache/
 typechain-types/
 coverage/
 deployments/*.local.json
+start-simulation.ps1
 
 # OS / editor
 Thumbs.db
@@ -20,9 +21,10 @@ Thumbs.db
 .vscode/
 
 # Node-RED userDir junk if someone points -u at simulation/
-backend/simulation/.config.*
-backend/simulation/settings.js
-backend/simulation/package.json
+simulation/.config.*
+simulation/settings.js
+simulation/package.json
+
+# frontend build artifacts
 frontend/packages/shared/dist/
 frontend/packages/shared/*.tsbuildinfo
-

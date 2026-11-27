@@ -1,6 +1,6 @@
 # @hydroledger/bridge
 
-Frontend-owned MQTT ↔ WebSocket bridge. **Does not modify** `../../backend/broker`.
+Frontend-owned MQTT ↔ WebSocket bridge. **Does not modify** the repo-root `broker/` stack.
 
 ## Run
 
