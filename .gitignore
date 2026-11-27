@@ -18,3 +18,11 @@ deployments/*.local.json
 Thumbs.db
 .DS_Store
 .vscode/
+
+# Node-RED userDir junk if someone points -u at simulation/
+backend/simulation/.config.*
+backend/simulation/settings.js
+backend/simulation/package.json
+frontend/packages/shared/dist/
+frontend/packages/shared/*.tsbuildinfo
+
