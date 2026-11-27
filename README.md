@@ -355,7 +355,7 @@ Laptop C:
 
 ```powershell
 $pub = "C:\Program Files\mosquitto\mosquitto_pub.exe"
-1..16 | ForEach-Object { & $pub -h 127.0.0.1 -p 1883 -t "sensor/flow" -m '{"node_id":"Sector_B","flow_rate":2.0}'; Start-Sleep -Milliseconds 500 }
+1..16 | ForEach-Object { & $pub -h 127.0.0.1 -p 1883 -t "sensor/flow" -m '{"node_id":"Sector_C","flow_rate":2.0}'; Start-Sleep -Milliseconds 500 }
 ```
 
 ### 8c. View the data
