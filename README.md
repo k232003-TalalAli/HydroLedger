@@ -101,10 +101,24 @@ npm install
 
 cd $P\hydro-contracts
 npm install --omit=dev
+#`--omit=dev` keeps Hardhat out. It installs only `ethers` and `dotenv`, which node3 and node4 scripts need.
+
+cd $P\frontend
+npm install -g pnpm
+pnpm install
+
 ```
 
-`--omit=dev` is what keeps Hardhat out. It installs only `ethers` and `dotenv`, which the read scripts need.
+In the `frontend/` folder, run:
 
+```powershell
+copy .env.example .env
+```
+
+Then edit `.env` for your laptop:
+
+- `VITE_LOCAL_SECTOR_ID` — `Sector_A`, `Sector_B`, or `Sector_C`
+- `VITE_RPC_URL` / contract addresses — match your local Besu deploy
 ---
 
 ## 4. Join the chain and catch up
@@ -293,6 +307,9 @@ cd $P\middleware
 node aggregator.js
 ```
 
+Optional: Create a powershell script: .\start-simulation.ps1 (already present on Laptop A and B)
+that starts all 3. Make sure it is present in gitignore, because its contents vary across systems, as Laptop A needs to run other files first.
+
 ### What the aggregator log must show
 
 ```text
@@ -321,12 +338,25 @@ Laptop A can bring every sector up to the current day at once with `npm run adva
 
 ### 8b. Trigger a leak (optional, to see an alert)
 
+Laptop A:
+
+```powershell
+1..16 | ForEach-Object { '{"node_id":"Sector_A","flow_rate":2.0}' | & "C:\Program Files\mosquitto\mosquitto_pub.exe" -h 127.0.0.1 -p 1883 -t "sensor/flow" -s; Start-Sleep -Milliseconds 500 }
+```
+
+Laptop B:
+
 ```powershell
 $pub = "C:\Program Files\mosquitto\mosquitto_pub.exe"
 1..16 | ForEach-Object { & $pub -h 127.0.0.1 -p 1883 -t "sensor/flow" -m '{"node_id":"Sector_B","flow_rate":2.0}'; Start-Sleep -Milliseconds 500 }
 ```
 
-On Laptop C write `"Sector_C"` in the message instead. Expected: `CLOSE_VALVE`, then `Breach confirmed`.
+Laptop C:
+
+```powershell
+$pub = "C:\Program Files\mosquitto\mosquitto_pub.exe"
+1..16 | ForEach-Object { & $pub -h 127.0.0.1 -p 1883 -t "sensor/flow" -m '{"node_id":"Sector_B","flow_rate":2.0}'; Start-Sleep -Milliseconds 500 }
+```
 
 ### 8c. View the data
 
@@ -370,6 +400,7 @@ Within about 30 seconds your aggregator logs `[CHAIN] Owner reset observed` and 
 ---
 
 ## 9. Every day after setup
+### 9a. Start the Backend
 
 ```powershell
 # 1. Docker Desktop open, Tailscale Connected, Laptop A's nodes running
@@ -380,14 +411,33 @@ docker compose up -d
 cd ..\chain-client
 node chain.js status
 
-# 3. Start everything else
+# 3. Start everything else (laptop B needs to create the ps1 script first)
 cd $P
-powershell -ExecutionPolicy Bypass -File .\start-all.ps1
+powershell -ExecutionPolicy Bypass -File .\start-simulation.ps1
 ```
 
 To stop: close the three windows (or Ctrl+C in each). Stop the node with `docker compose down` from `besu-setup` (never `-v`).
 
 If the laptop was off for a while, just do step 1. The node catches up on its own.
+
+### 9b. Start the Frontend
+
+Navigate to frontend/ and Open 3 terminal windows, and run:
+
+```powershell
+# Window 1
+pnpm --filter @hydroledger/shared build
+
+# Window 2
+pnpm --filter @hydroledger/bridge dev
+
+# Window 3
+pnpm --filter @hydroledger/web dev
+```
+
+The project is now live at http://localhost:5173
+
+
 
 ---
 

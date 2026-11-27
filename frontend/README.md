@@ -9,6 +9,7 @@ Backend setup (Besu, Mosquitto, Node-RED, aggregator) is in the **repo root** [`
 From this `frontend/` folder:
 
 ```powershell
+npm install -g pnpm
 pnpm install
 copy .env.example .env
 ```
@@ -19,7 +20,7 @@ Edit `.env` for your laptop:
 - `VITE_RPC_URL` / contract addresses — match your local Besu deploy
 
 Then:
-
+close and re open terminal
 ```powershell
 pnpm --filter @hydroledger/shared build
 pnpm --filter @hydroledger/bridge dev

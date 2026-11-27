@@ -13,6 +13,7 @@ cache/
 typechain-types/
 coverage/
 deployments/*.local.json
+mosquitto.conf
 start-simulation.ps1
 
 # OS / editor
